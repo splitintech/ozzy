@@ -1,0 +1,25 @@
+# Allowlisted source context; recordings, credentials, caches and Git never reach Docker.
+**
+!package.json
+!package-lock.json
+!pyproject.toml
+!uv.lock
+!LICENSE
+!python/
+!python/**
+!apps/
+!apps/studio/
+!apps/studio/**
+!apps/desktop/
+!apps/desktop/package.json
+!deploy/
+!deploy/entrypoint.sh
+**/__pycache__/
+**/*.pyc
+**/node_modules/
+**/dist/
+**/.env*
+**/*.wav
+**/*.mp3
+**/*.safetensors
+**/*.pt

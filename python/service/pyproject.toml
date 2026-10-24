@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voice-studio-service"
+version = "0.1.0"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "voice-studio-core", "voice-studio-engine",
+  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "python-multipart>=0.0.20,<1",
+  "pwdlib[argon2]>=0.2,<1", "httpx>=0.28,<1", "daytona==0.225.0", "python-dotenv>=1,<2",
+]
+
+[tool.uv.sources]
+voice-studio-core = { workspace = true }
+voice-studio-engine = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voice_studio_service"]

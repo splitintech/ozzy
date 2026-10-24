@@ -1,0 +1,110 @@
+name: Build signed stable candidates (no publication)
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Numeric major.minor.patch candidate version
+        required: true
+      sequence:
+        description: Positive monotonically increasing runtime release sequence
+        required: true
+permissions:
+  contents: read
+jobs:
+  native:
+    # Trusted, isolated signing runners with provisioned OS certificates/keychain.
+    # Never expose these runners to untrusted pull request workflows.
+    environment: stable-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: [self-hosted, macOS, ARM64, voice-signing]
+            target: aarch64-apple-darwin
+            ffmpeg_url: FFMPEG_MACOS_URL
+            ffmpeg_hash: FFMPEG_MACOS_SHA256
+            manifest_url: RUNTIME_MANIFEST_MACOS_URL
+            bundle: dmg
+          - runner: [self-hosted, Windows, X64, voice-signing]
+            target: x86_64-pc-windows-msvc
+            ffmpeg_url: FFMPEG_WINDOWS_URL
+            ffmpeg_hash: FFMPEG_WINDOWS_SHA256
+            manifest_url: RUNTIME_MANIFEST_WINDOWS_URL
+            bundle: nsis
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      RUNTIME_SEQUENCE: ${{ inputs.sequence }}
+      TARGET: ${{ matrix.target }}
+      RUNTIME_URL_BASE: ${{ vars.RUNTIME_URL_BASE }}
+      FFMPEG_URL: ${{ vars[matrix.ffmpeg_url] }}
+      FFMPEG_SHA256: ${{ vars[matrix.ffmpeg_hash] }}
+      VITE_RUNTIME_MANIFEST_URL: ${{ vars[matrix.manifest_url] }}
+      VOICE_RUNTIME_PUBLIC_KEY: ${{ vars.VOICE_RUNTIME_PUBLIC_KEY }}
+      VOICE_RUNTIME_PRIVATE_KEY: ${{ secrets.VOICE_RUNTIME_PRIVATE_KEY }}
+      VOICE_UPDATE_PUBLIC_KEY: ${{ vars.VOICE_UPDATE_PUBLIC_KEY }}
+      VOICE_UPDATE_URL: ${{ vars.VOICE_UPDATE_URL }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      APPLE_NOTARY_KEYCHAIN_PROFILE: ${{ vars.APPLE_NOTARY_KEYCHAIN_PROFILE }}
+      WINDOWS_CERTIFICATE_THUMBPRINT: ${{ vars.WINDOWS_CERTIFICATE_THUMBPRINT }}
+      WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.13.0
+          cache: npm
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - run: python -m pip install uv==0.11.7
+      - run: uv sync --locked --all-packages --extra inference
+      - run: uv run --locked --all-packages --extra inference python deploy/candidate_config.py
+      - run: npm ci
+      - run: npm run check
+      - run: uv run --locked --all-packages --extra inference pytest tests deploy/tests -m "not inference and not cloud"
+      - run: uv run --locked --all-packages --extra inference python deploy/build_sources.py
+      - name: Fetch reviewed FFmpeg and build native runtime
+        run: |
+          uv run --locked --all-packages --extra inference python deploy/fetch_ffmpeg.py --url "$FFMPEG_URL" --sha256 "$FFMPEG_SHA256" --output dist/ffmpeg
+          uv run --locked --all-packages --extra inference python scripts/build_runtime.py build --no-pack \
+            --ffmpeg-dir dist/ffmpeg --version "$RELEASE_VERSION" --sequence "$RUNTIME_SEQUENCE" \
+            --url "$RUNTIME_URL_BASE/voice-runtime-$RELEASE_VERSION-$TARGET.zip"
+      - name: Sign native runtime and create immutable pack
+        run: |
+          uv run --locked --all-packages --extra inference python deploy/native_sign.py --bundle dist/runtime/native/voice --log dist/runtime/native-signatures.log
+          uv run --locked --all-packages --extra inference python scripts/build_runtime.py pack --bundle dist/runtime/native/voice \
+            --platform "$TARGET" --version "$RELEASE_VERSION" --sequence "$RUNTIME_SEQUENCE" \
+            --url "$RUNTIME_URL_BASE/voice-runtime-$RELEASE_VERSION-$TARGET.zip"
+          uv run --locked --all-packages --extra inference python scripts/sign_runtime.py "dist/runtime/voice-runtime-$RELEASE_VERSION-$TARGET.manifest.json" \
+            --archive "dist/runtime/voice-runtime-$RELEASE_VERSION-$TARGET.zip" \
+            --output "dist/runtime/voice-runtime-$RELEASE_VERSION-$TARGET.signed.json"
+      - name: Notarize macOS runtime
+        if: runner.os == 'macOS'
+        run: |
+          uv run --locked --all-packages --extra inference python deploy/notarize.py "dist/runtime/voice-runtime-$RELEASE_VERSION-$TARGET.zip" --output dist/runtime/notarization.json
+      - name: Build signed app and updater artifacts
+        run: npm run desktop:build -- --config ../../deploy/tauri.candidate.generated.json --bundles ${{ matrix.bundle }}
+      - name: Notarize and staple macOS DMG
+        if: runner.os == 'macOS'
+        run: |
+          for dmg in apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg; do
+            uv run --locked --all-packages --extra inference python deploy/notarize.py "$dmg" --staple --output "$dmg.notarization.json"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: UNQUALIFIED-SIGNED-CANDIDATE-${{ matrix.target }}
+          path: |
+            dist/runtime/*.zip
+            dist/runtime/*.json
+            dist/runtime/*.log
+            dist/sources/
+            apps/desktop/src-tauri/target/release/bundle/
+          if-no-files-found: error
+          retention-days: 14

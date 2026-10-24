@@ -1,0 +1,10 @@
+import type { components } from "./api.generated";
+type Schema = components["schemas"];
+export type ModelName = NonNullable<Schema["SynthesisOptions"]["model"]>;
+export type Mode = Schema["CapabilitiesResponse"]["mode"];
+export type Voice = Schema["VoiceResponse"];
+export type Options = Schema["SynthesisOptions"] & Required<Pick<Schema["SynthesisOptions"], "model" | "seed" | "temperature">>;
+export type Artifact = Schema["ArtifactResponse"];
+export type Job = Omit<Schema["JobResponse"], "options"> & { options: Options };
+export type Capabilities = Schema["CapabilitiesResponse"];
+export const ACTIVE = new Set(["queued", "starting", "loading", "generating", "processing"]);

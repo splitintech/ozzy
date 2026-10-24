@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "chatterbox_commit": "5de7a54aa4e5e2baadb0182dde554908b48b85c2",
+  "perth_commit": "ff1c8ac55a976971245cdd53c18d6131ca00d993",
+  "models": {
+    "original": {
+      "repo_id": "ResembleAI/chatterbox",
+      "revision": "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18",
+      "files": [
+        {
+          "name": "conds.pt",
+          "size": 107374,
+          "sha256": "6552d70568833628ba019c6b03459e77fe71ca197d5c560cef9411bee9d87f4e",
+          "git_blob": "e13b43d1ce809473454627428ff413ebfc7e8660"
+        },
+        {
+          "name": "s3gen.safetensors",
+          "size": 1056484620,
+          "sha256": "2b78103c654207393955e4900aac14a12de8ef25f4b09424f1ef91941f161d4e",
+          "git_blob": "b752a028b2a1c2843b76e0df9582d8d81d10669d"
+        },
+        {
+          "name": "t3_cfg.safetensors",
+          "size": 2129653744,
+          "sha256": "914cb1696f47527fe8852ca8f1fe1fa63cb34f76f9c715e84e067b744dd0da81",
+          "git_blob": "2dd9884f4acb611912740cf3d9c8b33711a694ce"
+        },
+        {
+          "name": "tokenizer.json",
+          "size": 25470,
+          "sha256": null,
+          "git_blob": "abd07c710243ba89bf1b21780e7c37ddde92334e"
+        },
+        {
+          "name": "ve.safetensors",
+          "size": 5695784,
+          "sha256": "f0921cab452fa278bc25cd23ffd59d36f816d7dc5181dd1bef9751a7fb61f63c",
+          "git_blob": "0713f1587e627f23d93121e154a7de490d549dfb"
+        }
+      ],
+      "min_reference_seconds": 5.01,
+      "supports_exaggeration": true,
+      "supports_cfg": true
+    },
+    "turbo": {
+      "repo_id": "ResembleAI/chatterbox-turbo",
+      "revision": "749d1c1a46eb10492095d68fbcf55691ccf137cd",
+      "files": [
+        {
+          "name": "added_tokens.json",
+          "size": 418,
+          "sha256": null,
+          "git_blob": "fd85325cdfafc690469b6f0e8aeb5cf4649c1450"
+        },
+        {
+          "name": "conds.pt",
+          "size": 169454,
+          "sha256": "b1852099306fd6a7814eb9d0bd10186caba7249596cc23868f78a0eefbfa5033",
+          "git_blob": "a7f5dfc71c3a2cb450ef4fbda5a0a52c8d6102fe"
+        },
+        {
+          "name": "merges.txt",
+          "size": 456318,
+          "sha256": null,
+          "git_blob": "226b0752cac7789c48f0cb3ec53eda48b7be36cc"
+        },
+        {
+          "name": "s3gen.safetensors",
+          "size": 1056484620,
+          "sha256": "2b78103c654207393955e4900aac14a12de8ef25f4b09424f1ef91941f161d4e",
+          "git_blob": "b752a028b2a1c2843b76e0df9582d8d81d10669d"
+        },
+        {
+          "name": "s3gen_meanflow.safetensors",
+          "size": 1064875036,
+          "sha256": "d65cb687a2ed581ee6cc297e919ffefa63386944f42364ae13b78a594945514f",
+          "git_blob": "f6cfa2a96f3ac1f6c65f371c42b856c16409fe12"
+        },
+        {
+          "name": "special_tokens_map.json",
+          "size": 470,
+          "sha256": null,
+          "git_blob": "b2d2dbc845800c78fe98656af927d831ab4ff7b7"
+        },
+        {
+          "name": "t3_turbo_v1.safetensors",
+          "size": 1915480052,
+          "sha256": "fcf1f8c1d651bb7e3acd69ee5be269b4ac10c02980b7708213d598bc9f7cdf87",
+          "git_blob": "d25802c72273ca6e1f776a85b7cd7b042e1c3247"
+        },
+        {
+          "name": "tokenizer_config.json",
+          "size": 3878,
+          "sha256": null,
+          "git_blob": "58bc759ea7dab3dd5442f0500e493f170eeba67f"
+        },
+        {
+          "name": "ve.safetensors",
+          "size": 5695784,
+          "sha256": "f0921cab452fa278bc25cd23ffd59d36f816d7dc5181dd1bef9751a7fb61f63c",
+          "git_blob": "0713f1587e627f23d93121e154a7de490d549dfb"
+        },
+        {
+          "name": "vocab.json",
+          "size": 999186,
+          "sha256": null,
+          "git_blob": "a15dd0028acd1dd2c1c2394c80e1de8f3f12a0e4"
+        }
+      ],
+      "min_reference_seconds": 5.01,
+      "supports_exaggeration": false,
+      "supports_cfg": false
+    },
+    "nano": {
+      "repo_id": "ResembleAI/chatterbox-nano",
+      "revision": "71ccd1d0081b430592cea481f4307e764e07bc64",
+      "files": [
+        {
+          "name": "added_tokens.json",
+          "size": 418,
+          "sha256": null,
+          "git_blob": "fd85325cdfafc690469b6f0e8aeb5cf4649c1450"
+        },
+        {
+          "name": "conds.pt",
+          "size": 169454,
+          "sha256": "b1852099306fd6a7814eb9d0bd10186caba7249596cc23868f78a0eefbfa5033",
+          "git_blob": "a7f5dfc71c3a2cb450ef4fbda5a0a52c8d6102fe"
+        },
+        {
+          "name": "merges.txt",
+          "size": 456318,
+          "sha256": null,
+          "git_blob": "226b0752cac7789c48f0cb3ec53eda48b7be36cc"
+        },
+        {
+          "name": "s3gen.safetensors",
+          "size": 1056484620,
+          "sha256": "2b78103c654207393955e4900aac14a12de8ef25f4b09424f1ef91941f161d4e",
+          "git_blob": "b752a028b2a1c2843b76e0df9582d8d81d10669d"
+        },
+        {
+          "name": "s3gen_meanflow.safetensors",
+          "size": 1064875036,
+          "sha256": "d65cb687a2ed581ee6cc297e919ffefa63386944f42364ae13b78a594945514f",
+          "git_blob": "f6cfa2a96f3ac1f6c65f371c42b856c16409fe12"
+        },
+        {
+          "name": "special_tokens_map.json",
+          "size": 470,
+          "sha256": null,
+          "git_blob": "b2d2dbc845800c78fe98656af927d831ab4ff7b7"
+        },
+        {
+          "name": "t3_nano_v1.safetensors",
+          "size": 869899204,
+          "sha256": "72b110185087d945dbdf54dee4e333848e1811bdd5fd6cb16ceb8da50006f0c9",
+          "git_blob": "0aa6bda24f6d331c100686e506d6a640fb5d5fdc"
+        },
+        {
+          "name": "tokenizer_config.json",
+          "size": 3878,
+          "sha256": null,
+          "git_blob": "58bc759ea7dab3dd5442f0500e493f170eeba67f"
+        },
+        {
+          "name": "ve.safetensors",
+          "size": 5695784,
+          "sha256": "f0921cab452fa278bc25cd23ffd59d36f816d7dc5181dd1bef9751a7fb61f63c",
+          "git_blob": "0713f1587e627f23d93121e154a7de490d549dfb"
+        },
+        {
+          "name": "vocab.json",
+          "size": 999186,
+          "sha256": null,
+          "git_blob": "a15dd0028acd1dd2c1c2394c80e1de8f3f12a0e4"
+        }
+      ],
+      "min_reference_seconds": 5.01,
+      "supports_exaggeration": false,
+      "supports_cfg": false
+    }
+  }
+}

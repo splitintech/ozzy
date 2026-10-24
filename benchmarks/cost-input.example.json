@@ -1,0 +1,15 @@
+{
+  "measurement_basis": "EXAMPLE ONLY: replace every duration and price with measured pilot data",
+  "monthly_completed_messages": 100,
+  "monthly_controller_seconds": 36000,
+  "controller_hourly_usd": 0.0666,
+  "inference_seconds_per_completed_message": 30,
+  "startup_teardown_seconds_per_completed_message": 120,
+  "retry_seconds_per_completed_message": 5,
+  "worker_hourly_usd": 0.3312,
+  "monthly_database_usd": 0,
+  "monthly_storage_usd": 0,
+  "monthly_transfer_usd": 0,
+  "monthly_budget_usd": 50,
+  "owner_budget_approved": false
+}

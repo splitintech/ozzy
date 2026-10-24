@@ -1,0 +1,48 @@
+[project]
+name = "voice-studio-workspace"
+version = "0.1.0"
+description = "Private, portable reference-voice synthesis."
+requires-python = ">=3.11,<3.12"
+dependencies = ["voice-studio-cli", "voice-studio-service"]
+
+[tool.uv]
+override-dependencies = [
+  "resemble-perth @ git+https://github.com/resemble-ai/Perth.git@ff1c8ac55a976971245cdd53c18d6131ca00d993",
+]
+
+[tool.uv.workspace]
+members = ["python/core", "python/engine", "python/service", "python/cli"]
+
+[tool.uv.sources]
+voice-studio-core = { workspace = true }
+voice-studio-engine = { workspace = true }
+voice-studio-service = { workspace = true }
+voice-studio-cli = { workspace = true }
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+torchaudio = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<9", "pytest-cov>=6,<7", "httpx>=0.28,<1",
+  "ruff>=0.11,<1", "moto[s3]>=5,<6", "pyinstaller>=6.12,<7",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+  "inference: requires downloaded models and an authorized reference",
+  "cloud: requires explicitly configured external infrastructure",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

@@ -1,0 +1,28 @@
+{
+  "sqlite": [
+    "\nCREATE TABLE charges (\n\tid VARCHAR(160) NOT NULL, \n\tkind VARCHAR(30) NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tamount_usd FLOAT NOT NULL, \n\tseconds FLOAT NOT NULL, \n\tPRIMARY KEY (id)\n)\n\n",
+    "\nCREATE TABLE credentials (\n\tid VARCHAR(64) NOT NULL, \n\tdigest VARCHAR(64) NOT NULL, \n\tkind VARCHAR(20) NOT NULL, \n\tname VARCHAR(80) NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\texpires_at FLOAT, \n\trevoked BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (digest)\n)\n\n",
+    "\nCREATE TABLE login_throttle (\n\t\"key\" VARCHAR(64) NOT NULL, \n\tcount INTEGER NOT NULL, \n\twindow_start FLOAT NOT NULL, \n\tPRIMARY KEY (\"key\")\n)\n\n",
+    "\nCREATE TABLE runtime (\n\tid INTEGER NOT NULL, \n\tactive_job VARCHAR(64), \n\tlast_activity FLOAT NOT NULL, \n\tcontroller_sandbox_id VARCHAR(100), \n\tworker_sandbox_id VARCHAR(100), \n\tdispatch_token VARCHAR(64), \n\tdispatch_lease_until FLOAT, \n\tschema_version INTEGER NOT NULL, \n\tPRIMARY KEY (id)\n)\n\n",
+    "\nCREATE TABLE voices (\n\tid VARCHAR(64) NOT NULL, \n\tname VARCHAR(100) NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\toriginal_key VARCHAR(300) NOT NULL, \n\treference_key VARCHAR(300) NOT NULL, \n\tchecksum VARCHAR(64) NOT NULL, \n\tdetails JSON NOT NULL, \n\tauthorized BOOLEAN NOT NULL, \n\tactive BOOLEAN NOT NULL, \n\tdeleted BOOLEAN NOT NULL, \n\tPRIMARY KEY (id)\n)\n\n",
+    "\nCREATE TABLE jobs (\n\tid VARCHAR(64) NOT NULL, \n\tvoice_id VARCHAR(64) NOT NULL, \n\tstate VARCHAR(20) NOT NULL, \n\tpurpose VARCHAR(20) NOT NULL, \n\toptions JSON NOT NULL, \n\tscript_key VARCHAR(300) NOT NULL, \n\tfingerprint VARCHAR(64) NOT NULL, \n\tidempotency_key VARCHAR(128) NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tupdated_at FLOAT NOT NULL, \n\texpires_at FLOAT, \n\tattempt INTEGER NOT NULL, \n\tattempt_token VARCHAR(64), \n\tlease_until FLOAT, \n\tcancel_requested BOOLEAN NOT NULL, \n\tdeleted BOOLEAN NOT NULL, \n\terror_code VARCHAR(80), \n\terror_message VARCHAR(300), \n\tretryable BOOLEAN NOT NULL, \n\ttimings JSON NOT NULL, \n\treserved_usd FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(voice_id) REFERENCES voices (id), \n\tUNIQUE (idempotency_key)\n)\n\n",
+    "\nCREATE TABLE artifacts (\n\tid VARCHAR(64) NOT NULL, \n\tjob_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(30) NOT NULL, \n\t\"key\" VARCHAR(300) NOT NULL, \n\tmime_type VARCHAR(80) NOT NULL, \n\tchecksum VARCHAR(64) NOT NULL, \n\tsize INTEGER NOT NULL, \n\tduration FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(job_id) REFERENCES jobs (id)\n)\n\n",
+    "CREATE INDEX ix_charges_created_at ON charges (created_at)",
+    "CREATE INDEX ix_jobs_state ON jobs (state)",
+    "CREATE INDEX ix_jobs_voice_id ON jobs (voice_id)",
+    "CREATE INDEX ix_artifacts_job_id ON artifacts (job_id)"
+  ],
+  "postgresql": [
+    "\nCREATE TABLE charges (\n\tid VARCHAR(160) NOT NULL, \n\tkind VARCHAR(30) NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tamount_usd FLOAT NOT NULL, \n\tseconds FLOAT NOT NULL, \n\tPRIMARY KEY (id)\n)\n\n",
+    "\nCREATE TABLE credentials (\n\tid VARCHAR(64) NOT NULL, \n\tdigest VARCHAR(64) NOT NULL, \n\tkind VARCHAR(20) NOT NULL, \n\tname VARCHAR(80) NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\texpires_at FLOAT, \n\trevoked BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (digest)\n)\n\n",
+    "\nCREATE TABLE login_throttle (\n\tkey VARCHAR(64) NOT NULL, \n\tcount INTEGER NOT NULL, \n\twindow_start FLOAT NOT NULL, \n\tPRIMARY KEY (key)\n)\n\n",
+    "\nCREATE TABLE runtime (\n\tid INTEGER NOT NULL, \n\tactive_job VARCHAR(64), \n\tlast_activity FLOAT NOT NULL, \n\tcontroller_sandbox_id VARCHAR(100), \n\tworker_sandbox_id VARCHAR(100), \n\tdispatch_token VARCHAR(64), \n\tdispatch_lease_until FLOAT, \n\tschema_version INTEGER NOT NULL, \n\tPRIMARY KEY (id)\n)\n\n",
+    "\nCREATE TABLE voices (\n\tid VARCHAR(64) NOT NULL, \n\tname VARCHAR(100) NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\toriginal_key VARCHAR(300) NOT NULL, \n\treference_key VARCHAR(300) NOT NULL, \n\tchecksum VARCHAR(64) NOT NULL, \n\tdetails JSON NOT NULL, \n\tauthorized BOOLEAN NOT NULL, \n\tactive BOOLEAN NOT NULL, \n\tdeleted BOOLEAN NOT NULL, \n\tPRIMARY KEY (id)\n)\n\n",
+    "\nCREATE TABLE jobs (\n\tid VARCHAR(64) NOT NULL, \n\tvoice_id VARCHAR(64) NOT NULL, \n\tstate VARCHAR(20) NOT NULL, \n\tpurpose VARCHAR(20) NOT NULL, \n\toptions JSON NOT NULL, \n\tscript_key VARCHAR(300) NOT NULL, \n\tfingerprint VARCHAR(64) NOT NULL, \n\tidempotency_key VARCHAR(128) NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tupdated_at FLOAT NOT NULL, \n\texpires_at FLOAT, \n\tattempt INTEGER NOT NULL, \n\tattempt_token VARCHAR(64), \n\tlease_until FLOAT, \n\tcancel_requested BOOLEAN NOT NULL, \n\tdeleted BOOLEAN NOT NULL, \n\terror_code VARCHAR(80), \n\terror_message VARCHAR(300), \n\tretryable BOOLEAN NOT NULL, \n\ttimings JSON NOT NULL, \n\treserved_usd FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(voice_id) REFERENCES voices (id), \n\tUNIQUE (idempotency_key)\n)\n\n",
+    "\nCREATE TABLE artifacts (\n\tid VARCHAR(64) NOT NULL, \n\tjob_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(30) NOT NULL, \n\tkey VARCHAR(300) NOT NULL, \n\tmime_type VARCHAR(80) NOT NULL, \n\tchecksum VARCHAR(64) NOT NULL, \n\tsize INTEGER NOT NULL, \n\tduration FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(job_id) REFERENCES jobs (id)\n)\n\n",
+    "CREATE INDEX ix_charges_created_at ON charges (created_at)",
+    "CREATE INDEX ix_jobs_state ON jobs (state)",
+    "CREATE INDEX ix_jobs_voice_id ON jobs (voice_id)",
+    "CREATE INDEX ix_artifacts_job_id ON artifacts (job_id)"
+  ]
+}

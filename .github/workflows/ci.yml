@@ -1,0 +1,84 @@
+name: Test native platforms
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            machine: arm64
+          - os: windows-2022
+            machine: AMD64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.13.0
+          cache: npm
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - name: Assert native architecture
+        env:
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+        run: python -c "import os,platform; assert platform.machine() == os.environ['EXPECTED_MACHINE'], platform.machine()"
+      - run: python -m pip install uv==0.11.7
+      - run: uv sync --locked --all-packages
+      - name: Lightweight environment must not contain Torch
+        run: uv run --locked python -c "import importlib.util; assert importlib.util.find_spec('torch') is None"
+      - name: Install FFmpeg for test fixtures (not distribution)
+        if: runner.os == 'macOS'
+        run: brew list ffmpeg || brew install ffmpeg
+      - name: Install FFmpeg for test fixtures (not distribution)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --no-progress --yes
+      - name: Verify audio test tools
+        run: python -c "import shutil; assert shutil.which('ffmpeg') and shutil.which('ffprobe')"
+      - run: uv run --locked pytest tests deploy/tests -m "not inference and not cloud"
+      - run: npm ci
+      - run: npm run check
+      - name: Native installer and command tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --locked
+      - name: Source wheels and SBOM
+        run: uv run --locked python deploy/build_sources.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: source-and-notices-${{ matrix.os }}
+          path: dist/sources/
+          if-no-files-found: error
+
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.13.0
+          cache: npm
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: python -m pip install uv==0.11.7
+      - run: uv sync --locked --all-packages
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: browser-failure-evidence
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7

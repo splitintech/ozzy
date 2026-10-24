@@ -1,0 +1,33 @@
+name: Build controller and CPU worker images
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [controller, worker]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build immutable-source image
+        env:
+          TARGET: ${{ matrix.target }}
+        run: docker build --target "$TARGET" --file deploy/Dockerfile --tag "voice-studio:$TARGET" .
+      - name: Verify Torch separation and pinned Nano files
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          if [ "$TARGET" = controller ]; then
+            docker run --rm "voice-studio:$TARGET" python -c "import importlib.util; assert importlib.util.find_spec('torch') is None"
+          else
+            docker run --rm "voice-studio:$TARGET" python -c "import torch; assert torch.version.cuda is None; from voice_studio_engine.models import verify_model; assert verify_model('/opt/voice/models','nano')"
+          fi
+          docker run --rm "voice-studio:$TARGET" voice --help
+          docker image inspect "voice-studio:$TARGET" > "image-$TARGET.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: image-build-evidence-${{ matrix.target }}
+          path: image-*.json

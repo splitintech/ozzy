@@ -1,0 +1,1 @@
+{"main":{"identifier":"main","description":"Only the local main window can invoke Voice Studio commands.","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-save"]}}

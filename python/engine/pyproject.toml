@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voice-studio-engine"
+version = "0.1.0"
+requires-python = ">=3.11,<3.12"
+dependencies = ["voice-studio-core", "huggingface-hub>=0.34,<2"]
+
+[project.optional-dependencies]
+inference = [
+  "torch==2.6.0", "torchaudio==2.6.0",
+  "chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2",
+]
+
+[tool.uv.sources]
+voice-studio-core = { workspace = true }
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+torchaudio = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voice_studio_engine"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
