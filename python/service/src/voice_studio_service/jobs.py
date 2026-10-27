@@ -29,7 +29,7 @@ def submit(repo, storage, request, idempotency_key):
                 )
             return existing, False
         voice = s.get(Voice, request.voice_id)
-        if not voice or voice.deleted:
+        if not voice or voice.deleted or (repo.settings.profile == "hosted_daytona_single" and voice.created_at <= time.time() - 30 * 86400):
             raise DomainError("voice_not_found", "Import a reference voice first", 404)
         if request.purpose == "message" and not voice.active:
             raise DomainError("voice_not_approved", "Audition and approve this voice first", 409)
@@ -80,7 +80,7 @@ def submit(repo, storage, request, idempotency_key):
         return job, True
 
 
-def maintenance(repo, storage):
+def maintenance(repo, storage, physical=False):
     """Tombstone first. Retried physical cleanup never restores access."""
     with repo.tx(lock=True) as s:
         expired = list(
@@ -91,12 +91,23 @@ def maintenance(repo, storage):
                 )
             )
         )
+        if repo.durability and physical:
+            expired = []  # Never create new tombstones after the checkpoint.
+        if repo.settings.profile == "hosted_daytona_single" and not physical:
+            for voice in s.scalars(select(Voice).where(Voice.created_at <= time.time() - 30 * 86400, Voice.deleted.is_(False))):
+                voice.deleted, voice.active = True, False
+                for job in s.scalars(select(Job).where(Job.voice_id == voice.id)):
+                    job.deleted, job.cancel_requested = True, True
+                    if job.state == "queued":
+                        job.state = "cancelled"
         for job in expired:
             job.deleted, job.cancel_requested = True, True
             if job.state == "queued":
                 job.state = "cancelled"
         jobs = [(j.id, j.state) for j in s.scalars(select(Job).where(Job.deleted.is_(True)))]
         voices = [v.id for v in s.scalars(select(Voice).where(Voice.deleted.is_(True)))]
+    if repo.durability and not physical:
+        return  # Physical cleanup follows a verified tombstone checkpoint.
     for job_id, state in jobs:
         if state not in ACTIVE_STATES:
             storage.delete_prefix(f"expiring/jobs/{job_id}")

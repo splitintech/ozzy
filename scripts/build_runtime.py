@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -181,6 +182,15 @@ def build(args):
     output = args.output.resolve()
     work = output / "pyinstaller"
     work.mkdir(parents=True, exist_ok=True)
+    # Native Tauri builds can rebuild dist concurrently; freeze a private UI snapshot first.
+    staged_studio = work / "studio"
+    if staged_studio.exists():
+        shutil.rmtree(staged_studio)
+    shutil.copytree(studio, staged_studio)
+    studio = staged_studio
+    from voice_studio_service.deployment import bundle_context
+    deployment_bundle = work / "deploy-source.tar.gz"
+    bundle_context(ROOT, deployment_bundle)
     command = [
         sys.executable,
         "-m",
@@ -190,12 +200,16 @@ def build(args):
         "--onedir",
         "--name",
         "voice",
+        "--additional-hooks-dir",
+        str(ROOT / "deploy/hooks"),
         "--distpath",
         str(output / "native"),
         "--workpath",
         str(work / "work"),
         "--specpath",
         str(work),
+        "--add-data",
+        f"{deployment_bundle}{os.pathsep}voice_studio_cli",
         "--add-data",
         f"{studio}{os.pathsep}studio",
         "--add-data",
@@ -232,9 +246,9 @@ def build(args):
     command += ["--collect-data", "transformers"]
     for module in (
         "transformers.models.gpt2.modeling_gpt2",
-        "transformers.models.gpt2.tokenization_gpt2_fast",
+        "transformers.models.gpt2.tokenization_gpt2",
         "transformers.models.llama.modeling_llama",
-        "transformers.models.llama.tokenization_llama_fast",
+        "transformers.models.llama.tokenization_llama",
         "transformers.models.auto.tokenization_auto",
         "transformers.generation.utils",
     ):
@@ -252,6 +266,7 @@ def build(args):
         "voice-studio-cli",
     ):
         command += ["--copy-metadata", distribution]
+    command += ["--hidden-import", "keyring.backends.macOS" if sys.platform == "darwin" else "keyring.backends.Windows"]
     command += [
         "--hidden-import",
         "uvicorn.logging",
@@ -278,6 +293,10 @@ def build(args):
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
             "HF_HUB_DISABLE_TELEMETRY": "1",
+            "NUMBA_CACHE_DIR": str(work / "numba-cache"),
+            "VOICE_MODE": "local",
+            "VOICE_DATABASE_URL": "",
+            "VOICE_DATA_DIR": str(work / "probe-data"),
         }
     )
     subprocess.run(command, cwd=ROOT, env=build_env, check=True)
@@ -286,12 +305,20 @@ def build(args):
         (bundle / "DEVELOPMENT_ONLY_NOT_REDISTRIBUTABLE.txt").write_text(
             "Unsigned local development bundle. FFmpeg distribution obligations are unverified.\n"
         )
-    subprocess.run([str(bundle / ("voice" + suffix)), "doctor"], check=True)
-    subprocess.run([str(bundle / ("voice" + suffix)), "--runtime-self-test"], check=True)
     if platform.system() == "Darwin":
+        audit = [sys.executable, str(ROOT / "deploy/verify_macos_links.py"), str(bundle),
+                 "--repair-rpaths"]
+        if not args.development:
+            config = json.loads((ROOT / "apps/desktop/src-tauri/tauri.conf.json").read_text())
+            audit += ["--minimum-macos", config["bundle"]["macOS"]["minimumSystemVersion"]]
         subprocess.run(
-            [sys.executable, str(ROOT / "deploy/verify_macos_links.py"), str(bundle)], check=True
+            audit, check=True
         )
+    subprocess.run(
+        [sys.executable, str(ROOT / "deploy/smoke_runtime.py"),
+         str(bundle / ("voice" + suffix)), "--output", str(work / "smoke")],
+        env=build_env, check=True
+    )
     if not args.no_pack:
         archive, manifest = pack_runtime(
             bundle, output, args.version, args.sequence, target, args.url

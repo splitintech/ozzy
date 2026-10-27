@@ -30,7 +30,7 @@ def migrate(engine):
                 connection.execute(text("SELECT version FROM voice_schema")).scalar_one_or_none()
                 or 0
             )
-        if version > 1:
+        if version > 2:
             raise RuntimeError("Database was written by a newer release; do not downgrade it")
         if version == 0:
             migration = json.loads(
@@ -39,3 +39,9 @@ def migrate(engine):
             for statement in migration[dialect]:
                 connection.exec_driver_sql(statement)
             connection.execute(text("INSERT INTO voice_schema (version) VALUES (1)"))
+
+        if version < 2:
+            migration = json.loads(files("voice_studio_core").joinpath("schema-0002.json").read_text())
+            for statement in migration[dialect]:
+                connection.exec_driver_sql(statement)
+            connection.exec_driver_sql("UPDATE voice_schema SET version = 2")

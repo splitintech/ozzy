@@ -1,0 +1,12 @@
+{
+  "sqlite": [
+    "CREATE TABLE durable_state (id INTEGER PRIMARY KEY, revision BIGINT NOT NULL)",
+    "INSERT INTO durable_state (id, revision) VALUES (1, 0)",
+    "CREATE TABLE operation_receipts (id VARCHAR(64) PRIMARY KEY, fingerprint VARCHAR(64) NOT NULL, response TEXT NOT NULL, revision BIGINT NOT NULL, created_at DOUBLE PRECISION NOT NULL)"
+  ],
+  "postgresql": [
+    "CREATE TABLE durable_state (id INTEGER PRIMARY KEY, revision BIGINT NOT NULL)",
+    "INSERT INTO durable_state (id, revision) VALUES (1, 0)",
+    "CREATE TABLE operation_receipts (id VARCHAR(64) PRIMARY KEY, fingerprint VARCHAR(64) NOT NULL, response TEXT NOT NULL, revision BIGINT NOT NULL, created_at DOUBLE PRECISION NOT NULL)"
+  ]
+}

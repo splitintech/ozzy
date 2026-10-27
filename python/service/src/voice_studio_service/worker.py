@@ -118,9 +118,19 @@ class Worker:
         self.stop_event = threading.Event()
         self.last_voice_id = None
         self.last_work = time.monotonic()
+        self.last_orphan_cleanup = 0.0
 
     def process_one(self):
-        job = self.repo.claim()
+        if self.repo.durability:
+            try:
+                with self.repo.durability.lock:
+                    self.repo.durability.ensure_available()
+                    job = self.repo.claim()
+            except Exception:
+                self.stop_event.wait(1)
+                return False
+        else:
+            job = self.repo.claim()
         if job is None:
             return False
         started = time.monotonic()
@@ -185,6 +195,7 @@ class Worker:
                 reference = directory / "reference.wav"
                 self.storage.download(voice.reference_key, reference)
                 check_attempt(refresh=True)
+                reference_ready_at = time.monotonic()
                 output = directory / "output"
                 output.mkdir()
                 self.last_voice_id = voice.id
@@ -223,6 +234,7 @@ class Worker:
                             "engine_crashed", "The inference engine stopped unexpectedly", 503, True
                         )
                 phase = "processing"
+                processing_started = time.monotonic()
                 check_attempt(refresh=True)
                 exports = finish_audio(output / "master.wav", output)
                 metadata["processing_version"] = PROCESSING_VERSION
@@ -241,6 +253,7 @@ class Worker:
                     }
                 )
                 artifacts = []
+                upload_started = time.monotonic()
                 for item in exports:
                     check_attempt(refresh=True)
                     key = f"expiring/jobs/{job.id}/{job.attempt_token}/{Path(item['path']).name}"
@@ -257,21 +270,27 @@ class Worker:
                     )
                 timings = {
                     **metadata["timings"],
+                    "queue_wait_seconds": max(0, job.updated_at - job.created_at),
+                    "reference_download_seconds": reference_ready_at - started,
+                    "processing_seconds": upload_started - processing_started,
+                    "upload_seconds": time.monotonic() - upload_started,
                     "total_job_seconds": time.monotonic() - started,
                     "ready_to_artifacts_seconds": (
                         time.monotonic() - ready_at if ready_at else None
                     ),
                 }
                 check_attempt(refresh=True)
-                complete = self.repo.complete(job.id, job.attempt_token, artifacts, timings)
+                from .durability import publication
+                with publication(self.repo):
+                    complete = self.repo.complete(job.id, job.attempt_token, artifacts, timings)
                 if not complete:
                     raise lease_failure()
         except DomainError as exc:
             self.engine.stop()
-            self.repo.fail(job.id, job.attempt_token, exc.code, exc.message, exc.retryable)
+            self.fail(job.id, job.attempt_token, exc.code, exc.message, exc.retryable)
         except Exception:
             self.engine.stop()
-            self.repo.fail(
+            self.fail(
                 job.id,
                 job.attempt_token,
                 "worker_error",
@@ -289,6 +308,15 @@ class Worker:
                         pass  # expiring prefix lifecycle and maintenance provide cleanup.
         self.last_work = time.monotonic()
         return True
+
+    def fail(self, *args):
+        from .durability import publication
+        try:
+            with publication(self.repo):
+                self.repo.fail(*args)
+        except Exception:
+            # A pending checkpoint blocks publication; lease recovery retries later.
+            pass
 
     def run(self, exit_when_empty=False):
         try:
@@ -310,7 +338,25 @@ class Worker:
                     from .jobs import maintenance
 
                     try:
-                        maintenance(self.repo, self.storage)
+                        if self.repo.durability:
+                            # Do not create a checkpoint every idle second; expire only when due.
+                            from sqlalchemy import func, select
+
+                            from .durability import publication
+                            with self.repo.tx() as s:
+                                expired = s.scalar(select(func.count(Job.id)).where(Job.deleted.is_(False), Job.expires_at <= time.time()))
+                                expired += s.scalar(select(func.count(Voice.id)).where(Voice.deleted.is_(False), Voice.created_at <= time.time() - 30 * 86400))
+                            if expired:
+                                with publication(self.repo):
+                                    maintenance(self.repo, self.storage)
+                            with self.repo.durability.lock:
+                                self.repo.durability.ensure_available()
+                                maintenance(self.repo, self.storage, True)
+                                if time.monotonic() - self.last_orphan_cleanup > 3600:
+                                    self.storage.cleanup_orphans([item["key"] for item in (self.repo.durability.last or {}).get("objects", [])])
+                                    self.last_orphan_cleanup = time.monotonic()
+                        else:
+                            maintenance(self.repo, self.storage)
                     except Exception:
                         pass  # Tombstones still prevent reads; cleanup retries next idle cycle.
                     self.stop_event.wait(1)

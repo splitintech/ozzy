@@ -52,7 +52,7 @@ fn http() -> Result<reqwest::Client, String> {
         .build()
         .map_err(|_| "Cannot initialize downloads".into())
 }
-fn validate(m: &Manifest) -> Result<(), String> {
+pub fn validate(m: &Manifest) -> Result<(), String> {
     if m.schema != 1
         || m.platform != platform()
         || m.bytes == 0
@@ -81,7 +81,12 @@ fn validate(m: &Manifest) -> Result<(), String> {
         return Err("Incompatible or invalid runtime manifest".into());
     }
     let url = url::Url::parse(&m.url).map_err(|_| "Invalid pack URL")?;
-    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || url.host_str().is_none()
+    {
         return Err("Runtime downloads require HTTPS without credentials in the URL".into());
     }
     Ok(())
@@ -209,7 +214,6 @@ fn unpack(pack: &Path, directory: &Path, limit: u64) -> Result<(), String> {
 pub async fn install(app: AppHandle, url: String) -> Result<Manifest, String> {
     let m = manifest(&url).await?;
     let root = root(&app)?;
-    let current = root.join("runtime.json");
     let lock = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -218,13 +222,7 @@ pub async fn install(app: AppHandle, url: String) -> Result<Manifest, String> {
         .map_err(|_| "Cannot lock runtime installation")?;
     fs2::FileExt::try_lock_exclusive(&lock)
         .map_err(|_| "Another application instance is installing a runtime")?;
-    if let Ok(bytes) = fs::read(&current) {
-        if let Ok(previous) = serde_json::from_slice::<Manifest>(&bytes) {
-            if m.sequence < previous.sequence {
-                return Err("An older runtime cannot replace the current release".into());
-            }
-        }
-    }
+    check_sequence(&root, &m)?;
     let need = m.bytes + m.unpacked_bytes + 512_000_000;
     if fs2::available_space(&root).map_err(|_| "Cannot inspect disk space")? < need {
         return Err(format!(
@@ -285,6 +283,68 @@ pub async fn install(app: AppHandle, url: String) -> Result<Manifest, String> {
     if !stage.join(&m.executable).is_file() {
         return Err("Runtime executable is missing".into());
     }
+    // Readiness must succeed before changing either the runtime or its pointer.
+    // Use private scratch data, never the owner's database or model directory.
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(240),
+        tokio::process::Command::new(stage.join(&m.executable))
+            .arg("--runtime-self-test")
+            .current_dir(temp.path())
+            .env("VOICE_MODE", "local")
+            .env("VOICE_DATABASE_URL", "")
+            .env("VOICE_DATA_DIR", temp.path().join("probe-data"))
+            .env("NUMBA_CACHE_DIR", temp.path().join("probe-cache"))
+            .env("HF_HUB_OFFLINE", "1")
+            .env("TRANSFORMERS_OFFLINE", "1")
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| "Runtime readiness check timed out; previous runtime preserved")?
+    .map_err(|_| "Runtime cannot run on this machine; previous runtime preserved")?;
+    if !output.status.success() {
+        return Err("Runtime readiness failed; previous runtime preserved".into());
+    }
+    activate(&root, &stage, temp.path(), &m)?;
+    Ok(m)
+}
+
+fn check_sequence(root: &Path, m: &Manifest) -> Result<(), String> {
+    for name in ["runtime.json", "runtime.highest.json"] {
+        let path = root.join(name);
+        if path.exists() {
+            let previous: Manifest =
+                serde_json::from_slice(&fs::read(path).map_err(|_| "Cannot read runtime history")?)
+                    .map_err(|_| "Invalid runtime history")?;
+            validate(&previous)?;
+            if m.sequence < previous.sequence {
+                return Err("An older runtime cannot replace the current release".into());
+            }
+            if m.sequence == previous.sequence
+                && (m.sha256 != previous.sha256 || m.version != previous.version)
+            {
+                return Err("A runtime sequence cannot be reused for different contents".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_manifest(path: &Path, m: &Manifest) -> Result<(), String> {
+    let mut next = tempfile::NamedTempFile::new_in(path.parent().ok_or("Invalid metadata path")?)
+        .map_err(|_| "Cannot create activation metadata")?;
+    next.write_all(&serde_json::to_vec(m).map_err(|_| "Invalid metadata")?)
+        .map_err(|_| "Cannot write metadata")?;
+    next.as_file()
+        .sync_all()
+        .map_err(|_| "Cannot persist metadata")?;
+    next.persist(path).map_err(|_| "Cannot activate runtime")?;
+    Ok(())
+}
+
+fn activate(root: &Path, stage: &Path, temporary: &Path, m: &Manifest) -> Result<(), String> {
+    let current = root.join("runtime.json");
     let runtimes = root.join("runtimes");
     fs::create_dir_all(&runtimes).map_err(|_| "Cannot create runtime storage")?;
     let target = runtimes.join(&m.version);
@@ -292,36 +352,116 @@ pub async fn install(app: AppHandle, url: String) -> Result<Manifest, String> {
         if let Ok(bytes) = fs::read(&current) {
             if let Ok(previous) = serde_json::from_slice::<Manifest>(&bytes) {
                 if previous.version == m.version {
-                    if previous.sha256 == m.sha256 {
-                        return Ok(m);
+                    if previous.sha256 != m.sha256 {
+                        return Err(
+                            "A runtime version cannot be replaced by different contents".into()
+                        );
                     }
-                    return Err("A runtime version cannot be replaced by different contents".into());
                 }
             }
         }
         // Recover an interrupted activation using freshly verified extracted files.
-        fs::rename(&target, temp.path().join("abandoned-runtime"))
+        fs::rename(&target, temporary.join("abandoned-runtime"))
             .map_err(|_| "Close other instances before retrying runtime installation")?;
     }
-    fs::rename(stage, &target).map_err(|_| "Cannot activate runtime directory")?;
-    if current.exists() {
-        fs::copy(&current, root.join("runtime.previous.json"))
-            .map_err(|_| "Cannot preserve rollback metadata")?;
+    if fs::rename(stage, &target).is_err() {
+        let abandoned = temporary.join("abandoned-runtime");
+        if abandoned.exists() {
+            let _ = fs::rename(abandoned, &target);
+        }
+        return Err("Cannot activate runtime directory".into());
     }
-    let mut next =
-        tempfile::NamedTempFile::new_in(&root).map_err(|_| "Cannot create activation metadata")?;
-    next.write_all(&serde_json::to_vec(&m).map_err(|_| "Invalid metadata")?)
-        .map_err(|_| "Cannot write metadata")?;
-    next.as_file()
-        .sync_all()
-        .map_err(|_| "Cannot persist metadata")?;
-    next.persist(&current)
-        .map_err(|_| "Cannot activate runtime")?;
-    Ok(m)
+    if current.exists() {
+        let previous: Manifest =
+            serde_json::from_slice(&fs::read(&current).map_err(|_| "Cannot read current runtime")?)
+                .map_err(|_| "Invalid current runtime")?;
+        if previous.version != m.version {
+            write_manifest(&root.join("runtime.previous.json"), &previous)?;
+        }
+    }
+    write_manifest(&root.join("runtime.highest.json"), m)?;
+    write_manifest(&current, m)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fixture(version: &str, sequence: u64) -> Manifest {
+        Manifest {
+            schema: 1,
+            version: version.into(),
+            sequence,
+            platform: platform().into(),
+            url: "https://example.test/runtime.zip".into(),
+            bytes: 100,
+            unpacked_bytes: 200,
+            sha256: format!("{:064x}", sequence),
+            executable: if cfg!(windows) {
+                "voice/voice.exe"
+            } else {
+                "voice/voice"
+            }
+            .into(),
+        }
+    }
+    fn staged(root: &Path, m: &Manifest) -> PathBuf {
+        let path = root.join(format!("stage-{}", m.version));
+        let executable = path.join(&m.executable);
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::write(executable, b"verified fixture").unwrap();
+        path
+    }
+    #[test]
+    fn activation_keeps_previous_runtime_and_prevents_replay_after_rollback() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let first = fixture("0.1.0", 1);
+        let second = fixture("0.2.0", 2);
+        activate(root, &staged(root, &first), root, &first).unwrap();
+        activate(root, &staged(root, &second), root, &second).unwrap();
+        let previous: Manifest =
+            serde_json::from_slice(&fs::read(root.join("runtime.previous.json")).unwrap()).unwrap();
+        assert_eq!(previous.version, first.version);
+        assert!(root
+            .join("runtimes/0.1.0")
+            .join(&first.executable)
+            .is_file());
+        // Explicit rollback changes the current pointer, not the release high-water mark.
+        write_manifest(&root.join("runtime.json"), &previous).unwrap();
+        assert!(check_sequence(root, &first).is_err());
+        assert!(check_sequence(root, &second).is_ok());
+        let mut reused = second.clone();
+        reused.sha256 = "f".repeat(64);
+        assert!(check_sequence(root, &reused).is_err());
+    }
+    #[test]
+    fn failed_activation_preserves_current_and_can_be_retried() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let first = fixture("0.1.0", 1);
+        let second = fixture("0.2.0", 2);
+        activate(root, &staged(root, &first), root, &first).unwrap();
+        let bytes = fs::read(root.join("runtime.json")).unwrap();
+        assert!(activate(root, &root.join("missing"), root, &second).is_err());
+        assert_eq!(fs::read(root.join("runtime.json")).unwrap(), bytes);
+        activate(root, &staged(root, &second), root, &second).unwrap();
+        assert!(check_sequence(root, &second).is_ok());
+    }
+    #[test]
+    fn identical_pack_repairs_files_without_destroying_rollback() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let first = fixture("0.1.0", 1);
+        let second = fixture("0.2.0", 2);
+        activate(root, &staged(root, &first), root, &first).unwrap();
+        activate(root, &staged(root, &second), root, &second).unwrap();
+        let executable = root.join("runtimes/0.2.0").join(&second.executable);
+        fs::write(&executable, b"damaged").unwrap();
+        activate(root, &staged(root, &second), root, &second).unwrap();
+        assert_eq!(fs::read(executable).unwrap(), b"verified fixture");
+        let previous: Manifest =
+            serde_json::from_slice(&fs::read(root.join("runtime.previous.json")).unwrap()).unwrap();
+        assert_eq!(previous.version, first.version);
+    }
     fn archive(name: &str, limit: u64) -> Result<(), String> {
         let dir = tempfile::tempdir().unwrap();
         let pack = dir.path().join("bad.zip");

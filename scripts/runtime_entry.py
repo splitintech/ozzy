@@ -10,8 +10,14 @@ def main():
     multiprocessing.freeze_support()
     if getattr(sys, "frozen", False):
         internal = Path(sys._MEIPASS)
-        os.environ.setdefault("VOICE_FFMPEG_DIR", str(internal / "ffmpeg"))
+        os.environ["VOICE_FFMPEG_DIR"] = str(internal / "ffmpeg")
         os.environ.setdefault("VOICE_STATIC_DIR", str(internal / "studio"))
+        # Never write JIT caches into the signed/read-only application bundle.
+        from platformdirs import user_cache_dir
+
+        cache = Path(user_cache_dir("VoiceStudio")) / "numba"
+        os.environ.setdefault("NUMBA_CACHE_DIR", str(cache))
+        Path(os.environ["NUMBA_CACHE_DIR"]).mkdir(parents=True, exist_ok=True)
     if sys.argv[1:2] == ["--runtime-self-test"]:
         import json
         import subprocess
@@ -45,6 +51,15 @@ def main():
         )
         return
     if sys.argv[1:2] == ["--engine-runner"]:
+        if "--offline-smoke" in sys.argv[2:]:
+            import socket
+
+            def offline(*_, **__):
+                raise RuntimeError("Network access disabled during frozen inference smoke")
+
+            socket.socket.connect = offline
+            socket.socket.connect_ex = offline
+            socket.create_connection = offline
         from voice_studio_engine.runner import main as runner
 
         runner()

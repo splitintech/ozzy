@@ -5,7 +5,7 @@ import time
 
 from fastapi import Request
 from pwdlib import PasswordHash
-from sqlalchemy import select
+from sqlalchemy import select, update
 from voice_studio_core.contracts import DomainError
 from voice_studio_core.database import Credential, LoginThrottle
 
@@ -14,6 +14,79 @@ passwords = PasswordHash.recommended()
 
 def digest(token):
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def initialize_local_access(app):
+    """Persist only a digest and fixed deadline; a restart cannot renew the same key."""
+    settings, repo = app.state.settings, app.state.repo
+    app.state.local_access_expires_at = None
+    app.state.local_access_deadline = None
+    if settings.mode != "local" or not settings.local_token.get_secret_value():
+        return
+    fingerprint = digest(settings.local_token.get_secret_value())
+    now = time.time()
+    with repo.tx(lock=True) as session:
+        # Retired per-launch keys must not authenticate through the API-key fallback.
+        session.execute(
+            update(Credential)
+            .where(Credential.kind == "local_access", Credential.digest != fingerprint)
+            .values(revoked=True)
+        )
+        credential = session.scalar(select(Credential).where(Credential.digest == fingerprint))
+        if credential is None:
+            credential = Credential(
+                digest=fingerprint,
+                kind="local_access",
+                name="Local workspace access",
+                created_at=now,
+                expires_at=now + settings.local_token_ttl_seconds,
+            )
+            session.add(credential)
+        elif credential.kind != "local_access":
+            raise ValueError("Use a new random local access key, not an existing API credential")
+        else:
+            # Tightening the configured lifetime can shorten, never extend, a key's life.
+            credential.expires_at = min(
+                credential.expires_at or credential.created_at,
+                credential.created_at + settings.local_token_ttl_seconds,
+            )
+        expires_at = credential.expires_at
+        if credential.revoked:
+            expires_at = min(expires_at, now)
+    app.state.local_access_expires_at = expires_at
+    app.state.local_access_deadline = time.monotonic() + max(0, expires_at - now)
+
+
+def authenticate_local_access(request, bearer):
+    settings = request.app.state.settings
+    expected = settings.local_token.get_secret_value()
+    if (
+        settings.mode != "local"
+        or not expected
+        or not bearer
+        or not hmac.compare_digest(expected, bearer)
+    ):
+        return False
+    deadline = getattr(request.app.state, "local_access_deadline", None)
+    with request.app.state.repo.tx() as session:
+        credential = session.scalar(select(Credential).where(Credential.digest == digest(bearer)))
+        if (
+            deadline is None
+            or time.monotonic() >= deadline
+            or not credential
+            or credential.kind != "local_access"
+            or credential.revoked
+            or credential.expires_at is None
+            or time.time() >= credential.expires_at
+        ):
+            raise DomainError(
+                "local_access_expired",
+                "Your local access key has expired. Reopen the local workspace in the desktop app, "
+                "or restart voice local for a new key. If VOICE_LOCAL_TOKEN is configured, replace "
+                "or unset it first. Your saved voices and takes are unchanged.",
+                401,
+            )
+    return True
 
 
 def authenticate(request: Request):
@@ -30,10 +103,8 @@ def authenticate(request: Request):
         raise DomainError("origin_forbidden", "Cross-site requests are not allowed", 403)
     authorization = request.headers.get("authorization", "")
     bearer = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
-    if settings.mode == "local":
-        expected = settings.local_token.get_secret_value()
-        if expected and bearer and hmac.compare_digest(expected, bearer):
-            return "local"
+    if authenticate_local_access(request, bearer):
+        return "local"
     token = (
         bearer if settings.mode == "local" else (bearer or request.cookies.get("voice_session", ""))
     )
@@ -43,6 +114,7 @@ def authenticate(request: Request):
         credential = s.scalar(select(Credential).where(Credential.digest == digest(token)))
         if (
             not credential
+            or credential.kind not in {"api", "session"}
             or credential.revoked
             or (credential.expires_at and credential.expires_at <= time.time())
         ):

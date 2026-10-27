@@ -19,6 +19,21 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("Studio workflow", () => {
+  it("shows the server's fixed local access deadline on the sign-in screen", async () => {
+    const deadline = 1800000000;
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(
+      path === "/v1/session" ? { mode: "local", local_access_expires_at: deadline }
+        : { code: "local_access_expired", message: "Restart with a new key" },
+    ), { status: path === "/v1/session" ? 200 : 401 })));
+    await act(async () => { render(<App />); });
+    expect(screen.getByText(/Access key expires:/)).toBeTruthy();
+    expect(document.querySelector("time")?.dateTime).toBe(new Date(deadline * 1000).toISOString());
+    fireEvent.change(screen.getByLabelText("Local access key"), { target: { value: "expired-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open your studio" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Restart with a new key");
+    expect(screen.queryByRole("navigation")).toBeNull();
+  });
+
   it("opens a fresh local browser connection without an expired-session error", async () => {
     vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(
       path === "/v1/session" ? { mode: "local" } : { code: "unauthorized", message: "Access expired" },
@@ -57,6 +72,20 @@ describe("Studio workflow", () => {
     expect((screen.getByRole("button", { name: "Prepare reference" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
     expect(screen.getByLabelText("Reference recording")).toBeTruthy();
+  });
+  it("preserves an edited excerpt when audio metadata arrives later", async () => {
+    URL.createObjectURL = vi.fn(() => "blob:fixture");
+    URL.revokeObjectURL = vi.fn();
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Your voice" }));
+    fireEvent.change(screen.getByLabelText("Reference recording"), { target: { files: [new File(["audio"], "test.wav")] } });
+    const end = screen.getByLabelText("End (seconds)") as HTMLInputElement;
+    fireEvent.focus(end);
+    fireEvent.change(end, { target: { value: "7" } });
+    const audio = screen.getByLabelText("Original reference preview");
+    Object.defineProperty(audio, "duration", { value: 8 });
+    fireEvent.loadedMetadata(audio);
+    expect(end.value).toBe("7");
   });
   it("explains an explicit hosted transfer before importing", async () => {
     mode = "hosted"; render(<App />);

@@ -6,6 +6,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class SessionResponse(BaseModel):
+    mode: Literal["local", "hosted"]
+    profile: Literal["local", "hosted_external", "hosted_daytona_single"]
+    local_access_expires_at: float | None = None
+
+
 class JobState(StrEnum):
     QUEUED = "queued"
     STARTING = "starting"
@@ -169,9 +175,28 @@ class Limits(BaseModel):
 
 
 class CapabilitiesResponse(BaseModel):
+    profile: Literal["local", "hosted_external", "hosted_daytona_single"] | None = None
     mode: Literal["local", "hosted"]
     device: str
     models: list[ModelCapability]
     limits: Limits
     performance_qualified: bool
     orchestration_error: str | None = None
+
+
+class CheckpointStatus(BaseModel):
+    revision: int
+    created_at: float
+    schema_version: int
+
+
+class DurabilityStatus(BaseModel):
+    enabled: bool
+    state: Literal["saved", "storage_unavailable", "restoring"]
+    checkpoint: CheckpointStatus | None = None
+
+
+class OperationStatus(BaseModel):
+    operation_id: str
+    state: Literal["saved", "saving"]
+    revision: int

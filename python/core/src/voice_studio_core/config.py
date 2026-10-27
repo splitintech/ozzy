@@ -8,6 +8,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="VOICE_", env_file=".env", extra="ignore")
 
+    profile: Literal["local", "hosted_external", "hosted_daytona_single"] | None = None
+    storage_backend: Literal["local", "s3", "daytona_volume"] | None = None
+    volume_dir: Path = Path("/mnt/voice-objects")
+    checkpoint_dir: Path = Path("/mnt/voice-checkpoints")
+    control_token: SecretStr = SecretStr("")
+    backup_key: SecretStr = SecretStr("")
+    launcher_dir: Path = Path.home() / ".voice-studio" / "deployments"
+    deployment_region: str | None = None
+    single_hourly_usd: float = Field(default=0.3312, ge=0, allow_inf_nan=False)
+    migrate_on_start: bool = True
+    pool_size: int = Field(default=5, ge=1, le=10)
     role: Literal["controller", "worker"] = "controller"
     hosted_models: list[str] = Field(default_factory=lambda: ["nano"])
     public_origin: str = ""
@@ -16,32 +27,33 @@ class Settings(BaseSettings):
     model_dir: Path = Path("models")
     database_url: str = ""
     bind_host: str = "127.0.0.1"
-    port: int = 8765
+    port: int = Field(default=8765, ge=1, le=65535)
     local_token: SecretStr = SecretStr("")
+    local_token_ttl_seconds: int = Field(default=8 * 3600, ge=60, le=24 * 3600)
     owner_password_hash: SecretStr = SecretStr("")
     session_secret: SecretStr = SecretStr("")
     allowed_origins: list[str] = Field(default_factory=list)
     static_dir: Path = Path("apps/studio/dist")
     worker_enabled: bool = True
     device: Literal["cpu", "mps", "cuda"] = "cpu"
-    max_upload_bytes: int = 50 * 1024 * 1024
-    max_reference_seconds: int = 600
-    max_queue: int = 20
+    max_upload_bytes: int = Field(default=50 * 1024 * 1024, gt=0, le=50 * 1024 * 1024)
+    max_reference_seconds: int = Field(default=600, gt=5, le=600)
+    max_queue: int = Field(default=20, ge=1, le=1000)
     cpu_threads: int = Field(default=4, ge=1, le=64)
     local_engine_idle_seconds: int = Field(default=300, ge=0, le=3600)
-    job_timeout_seconds: int = 900
-    lease_seconds: int = 60
-    max_attempts: int = 2
-    retention_days: int = 30
-    controller_idle_seconds: int = 600
-    monthly_budget_usd: float = 50
-    job_reservation_usd: float = 0.50
-    worker_cpu: int = 4
-    worker_memory_gib: int = 8
-    worker_disk_gib: int = 10
+    job_timeout_seconds: int = Field(default=900, gt=0)
+    lease_seconds: int = Field(default=60, gt=0)
+    max_attempts: int = Field(default=2, ge=1, le=10)
+    retention_days: int = Field(default=30, ge=1, le=30)
+    controller_idle_seconds: int = Field(default=600, gt=0)
+    monthly_budget_usd: float = Field(default=50, gt=0, allow_inf_nan=False)
+    job_reservation_usd: float = Field(default=0.50, gt=0, allow_inf_nan=False)
+    worker_cpu: int = Field(default=4, ge=1)
+    worker_memory_gib: int = Field(default=8, ge=1)
+    worker_disk_gib: int = Field(default=10, ge=1)
     worker_gpu_type: str = ""
-    worker_hourly_usd: float = 0.3312
-    controller_hourly_usd: float = 0.0666
+    worker_hourly_usd: float = Field(default=0.3312, ge=0, allow_inf_nan=False)
+    controller_hourly_usd: float = Field(default=0.0666, ge=0, allow_inf_nan=False)
     s3_endpoint: str = ""
     s3_region: str = "us-east-1"
     s3_bucket: str = ""
@@ -57,10 +69,28 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_hosted(self):
+        if self.profile is None:
+            self.profile = "local" if self.mode == "local" else "hosted_external"
+        else:
+            self.mode = "local" if self.profile == "local" else "hosted"
+        expected_storage = {"local": "local", "hosted_external": "s3", "hosted_daytona_single": "daytona_volume"}[self.profile]
+        self.storage_backend = self.storage_backend or expected_storage
+        if self.storage_backend != expected_storage:
+            raise ValueError("Storage backend does not match the deployment profile")
+        if self.profile == "hosted_daytona_single":
+            import base64
+            try:
+                key = base64.b64decode(self.backup_key.get_secret_value(), validate=True)
+            except ValueError:
+                key = b""
+            if len(key) != 32:
+                raise ValueError("A protected 32-byte checkpoint key is required")
+            if self.device != "cpu":
+                raise ValueError("The single-sandbox profile supports CPU only")
         if self.mode == "hosted":
             required = {
                 "database_url": self.database_url.startswith("postgresql"),
-                "s3_bucket": bool(self.s3_bucket),
+                "s3_bucket": self.storage_backend != "s3" or bool(self.s3_bucket),
                 "owner_password_hash": self.role == "worker"
                 or bool(self.owner_password_hash.get_secret_value()),
                 "session_secret": self.role == "worker"

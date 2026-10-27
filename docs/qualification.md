@@ -23,7 +23,24 @@ Source tests, real inference smoke tests, owner voice review, hosted performance
 9. Replace all example costs/durations in `benchmarks/cost-input.example.json` with pilot measurements. Keep inference, startup/teardown, and retry durations non-overlapping; include database, storage, and transfer. Run `scripts/cost_forecast.py`. Example zero external-service costs are not measured costs. API admission accounting estimates compute; provider billing remains authoritative.
 10. On clean Apple Silicon macOS and Windows x64, test first installation, interrupted/corrupt downloads, low disk, engine/app crash, reboot, reference import, export playback, network-disabled generation, OS signatures, updater signatures, rollback, deletion, and explicit workspace transfer. Preserve revision-bound evidence for the stable gate.
 
-The local Nano smoke uses the model's bundled default conditioning only to verify offline model loading and generation. It does not test the owner's voice or qualify hosted performance.
+After reviewing the Original/Turbo/Nano comparison, assemble a private JSON array
+of measured candidates and run `uv run python scripts/select_profile.py
+/private/path/candidates.json`. Each record contains a unique `id`, the full
+`benchmark` report, reviewed `scores`, `hosted` evidence, and the `cost` forecast
+including `cost_per_completed_message_usd`. Record an `unavailable_reason` when a
+candidate could not be measured. Eight-CPU records also require
+`eight_cpu_quota_verified: true`. The selector checks current model pins and the
+quality/performance gate, reports rejection reasons, and selects the cheapest
+eligible profile. GPU is ineligible when CPU passes or CPU review is missing.
+The tool neither provisions resources nor approves a stable release, and does
+not replace the requirement to compare all three models.
+
+Generation metadata separates model loading and reference preparation. Job
+timings additionally separate queue wait, reference retrieval, finishing, and
+durable uploads. The hosted warm gate still includes processing and upload and
+excludes preceding queue wait.
+
+The original local Nano smoke uses the model's bundled default conditioning only to verify offline model loading and generation. It does not test the owner's voice or qualify hosted performance.
 
 For an additional conditioning smoke, `scripts/engine_smoke.py --synthetic-source PATH` accepts previously application-generated synthetic audio and deliberately repeats it into a fixture reference. It exercises reference preparation, model conditioning, generation, and all exports with socket access blocked. Its report always leaves owner-voice, quality, and hosted qualification false. Do not substitute this fixture for an owner's reference.
 

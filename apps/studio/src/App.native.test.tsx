@@ -33,6 +33,7 @@ beforeEach(() => {
   fixtures.request.mockReset();
   fixtures.importVoice.mockReset();
   fixtures.native.mockImplementation(async (command: string) => {
+    if (command === "cloud_status") return [{ sandbox_id: "fixture", role: "controller", state: "started" }];
     if (command === "cloud_start") fixtures.mode = "hosted";
     if (command === "check_update") return { available: true, version: "0.2.0", notes: "Test release notes." };
     if (command === "inspect_runtime") return { bytes: 300_000_000, unpacked_bytes: 800_000_000, platform: "macos-aarch64" };
@@ -57,6 +58,15 @@ async function openWorkspace() {
 }
 
 describe("Desktop workspace boundaries", () => {
+  it("checks hosted state through the native credential boundary without starting a session", async () => {
+    render(<App />);
+    await openWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Check hosted status" }));
+    expect(await screen.findByText("controller: started")).toBeTruthy();
+    expect(fixtures.native).toHaveBeenCalledWith("cloud_status");
+    expect(fixtures.native.mock.calls.some(([name]) => name === "cloud_start")).toBe(false);
+  });
   it("offers only detected local devices and starts the owner's selection", async () => {
     render(<App />);
     const device = await screen.findByLabelText("Local processing device");
@@ -90,7 +100,7 @@ describe("Desktop workspace boundaries", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch workspace" }));
     await screen.findByRole("button", { name: "Open local workspace" });
-    fireEvent.click(screen.getByText("Connect to your Daytona workspace"));
+    fireEvent.click(screen.getByText("Advanced: external PostgreSQL/S3 deployment"));
     fireEvent.change(screen.getByLabelText("Controller snapshot"), { target: { value: "test-controller" } });
     fireEvent.click(screen.getByRole("button", { name: "Start hosted workspace" }));
     const password = await screen.findByLabelText("Owner password");

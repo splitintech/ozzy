@@ -8,7 +8,7 @@ use std::{
     sync::Mutex,
     time::Duration,
 };
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
 #[derive(Clone)]
@@ -279,6 +279,7 @@ async fn import_voice(
     start: f64,
     end: f64,
     authorized: bool,
+    idempotency_key: Option<String>,
 ) -> Result<ApiResponse, String> {
     if bytes.len() > 50 * 1024 * 1024 {
         return Err("Recordings must be under 50 MB".into());
@@ -293,9 +294,13 @@ async fn import_voice(
         .text("start", start.to_string())
         .text("end", end.to_string())
         .text("authorized", authorized.to_string());
+    let mut request = api_builder(&c, "/v1/voices", reqwest::Method::POST)?;
+    if let Some(key) = idempotency_key {
+        if key.len() > 128 || !key.is_ascii() { return Err("Invalid operation key".into()); }
+        request = request.header("Idempotency-Key", key);
+    }
     response(
-        api_builder(&c, "/v1/voices", reqwest::Method::POST)?
-            .multipart(form)
+        request.multipart(form)
             .send()
             .await
             .map_err(|_| "Reference import failed")?,
@@ -387,6 +392,64 @@ async fn install_runtime(
         .map_err(|_| "Runtime installation already in progress")?;
     runtime::install(app, manifest_url).await
 }
+#[tauri::command]
+async fn hosted_deployments(app: AppHandle) -> Result<serde_json::Value, String> {
+    let output = tokio::process::Command::new(runtime::installed(&app)?)
+        .args(["cloud", "deployments"]).stdin(Stdio::null()).output().await
+        .map_err(|_| "Cannot list deployments")?;
+    serde_json::from_slice(&output.stdout).map_err(|_| "Cannot read deployment metadata".into())
+}
+
+#[tauri::command]
+async fn hosted_action(app: AppHandle, state: State<'_, NativeState>, payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let _guard = state.install.try_lock().map_err(|_| "Another runtime operation is in progress")?;
+    let action = payload["action"].as_str().ok_or("Missing action")?;
+    if !["setup", "start", "status", "stop", "backup"].contains(&action) { return Err("Unsupported hosted action".into()); }
+    let deployment = payload["deployment"].as_str().ok_or("Missing deployment")?;
+    if deployment.is_empty() || deployment.len() > 48 || !deployment.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+        return Err("Invalid deployment name".into());
+    }
+    let mut command = tokio::process::Command::new(runtime::installed(&app)?);
+    command.args(["cloud", action, "--deployment", deployment]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    if action == "setup" {
+        command.args(["--credentials-stdin", "--no-open", "--json"]);
+        if let Some(source) = payload["source"].as_str() { command.args(["--source", source]); }
+        if let Some(region) = payload["region"].as_str() { command.args(["--region", region]); }
+    }
+    let mut child = command.spawn().map_err(|_| "Cannot start hosted launcher")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        if action == "setup" { stdin.write_all(payload.to_string().as_bytes()).await.map_err(|_| "Cannot deliver protected setup input")?; }
+        stdin.shutdown().await.map_err(|_| "Cannot finish protected setup input")?;
+    }
+    let stderr = child.stderr.take().ok_or("Missing progress stream")?;
+    let events = app.clone();
+    let progress = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                if let Some(phase) = value["phase"].as_str() {
+                    if ["preflight", "building", "volumes", "starting", "bootstrapping", "checking", "ready"].contains(&phase) {
+                        let _ = events.emit("hosted-progress", phase);
+                    }
+                }
+            }
+        }
+    });
+    let output = tokio::time::timeout(Duration::from_secs(2400), child.wait_with_output()).await
+        .map_err(|_| "Setup timed out; retry to reconcile existing resources")?
+        .map_err(|_| "Hosted launcher failed")?;
+    let _ = progress.await;
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|_| "Invalid launcher result")?;
+    if !output.status.success() { return Err(result["message"].as_str().unwrap_or("Hosted operation failed").into()); }
+    if let Some(destination) = result["url"].as_str() {
+        let base = url::Url::parse(destination).map_err(|_| "Invalid hosted URL")?;
+        if base.scheme() != "https" { return Err("Hosted access requires HTTPS".into()); }
+        *state.connection.lock().map_err(|_| "Connection lock unavailable")? = Some(Connection { base, token: String::new(), client: new_client()?, mode: "hosted".into() });
+    }
+    Ok(result)
+}
+
 async fn cloud_command(
     app: &AppHandle,
     args: Vec<String>,
@@ -475,6 +538,14 @@ async fn cloud_start(
     Ok(())
 }
 #[tauri::command]
+async fn cloud_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    let key = keyring::Entry::new("studio.voicestudio.app", "daytona-api-key")
+        .map_err(|_| "Credential storage unavailable")?
+        .get_password()
+        .map_err(|_| "No Daytona credential stored")?;
+    cloud_command(&app, vec!["cloud".into(), "status".into()], &key).await
+}
+#[tauri::command]
 async fn cloud_stop(app: AppHandle, state: State<'_, NativeState>) -> Result<(), String> {
     let key = keyring::Entry::new("studio.voicestudio.app", "daytona-api-key")
         .map_err(|_| "Credential storage unavailable")?
@@ -507,11 +578,23 @@ fn disconnect(state: State<'_, NativeState>) -> Result<(), String> {
 }
 #[tauri::command]
 async fn rollback_runtime(app: AppHandle, state: State<'_, NativeState>) -> Result<(), String> {
+    let _guard = state
+        .install
+        .try_lock()
+        .map_err(|_| "Runtime installation in progress")?;
     let root = runtime::root(&app)?;
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(root.join("runtime-install.lock"))
+        .map_err(|_| "Cannot lock runtime installation")?;
+    fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| "Runtime installation in progress")?;
     let previous = root.join("runtime.previous.json");
     let metadata: runtime::Manifest =
         serde_json::from_slice(&fs::read(&previous).map_err(|_| "No previous runtime")?)
             .map_err(|_| "Invalid rollback metadata")?;
+    runtime::validate(&metadata)?;
     if !root
         .join("runtimes")
         .join(&metadata.version)
@@ -550,7 +633,7 @@ async fn rollback_runtime(app: AppHandle, state: State<'_, NativeState>) -> Resu
     next.as_file()
         .sync_all()
         .map_err(|_| "Cannot persist rollback metadata")?;
-    disconnect(state)?;
+    disconnect(state.clone())?;
     next.persist(root.join("runtime.json"))
         .map_err(|_| "Could not restore previous runtime")?;
     Ok(())
@@ -652,7 +735,10 @@ fn main() {
             save_artifact,
             inspect_runtime,
             install_runtime,
+            hosted_deployments,
+            hosted_action,
             cloud_start,
+            cloud_status,
             cloud_stop,
             disconnect,
             rollback_runtime,

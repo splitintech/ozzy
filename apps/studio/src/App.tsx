@@ -1,8 +1,10 @@
+import { HostedLauncher } from "./HostedLauncher";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, artifactBlob, desktop, importVoice, native, request, saveArtifact, setAccessKey } from "./api";
 import { ACTIVE, type Capabilities, type Job, type ModelName, type Options, type Voice } from "./types";
 
 type Page = "create" | "voice" | "history" | "settings";
+type CloudSession = { sandbox_id: string; role: string; state: string };
 const modelLabels: Record<ModelName, string> = { nano: "Nano", turbo: "Turbo", original: "Original" };
 const phases: Record<Job["state"], string> = {
   queued: "Waiting in the queue", starting: "Starting your engine", loading: "Loading your voice",
@@ -47,6 +49,7 @@ function Player({ job, onPlayed, onError }: { job: Job; onPlayed?: () => void; o
 function Connection({ onConnected, error, onError }: { onConnected: () => void; error: string; onError: (e: unknown) => void }) {
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState("local");
+  const [accessExpiresAt, setAccessExpiresAt] = useState<number | null>(null);
   const [pending, setPending] = useState(false);
   const [manifestUrl, setManifestUrl] = useState(import.meta.env.VITE_RUNTIME_MANIFEST_URL || "");
   const [runtimeInfo, setRuntimeInfo] = useState<{ bytes: number; unpacked_bytes: number; platform: string }>();
@@ -54,7 +57,9 @@ function Connection({ onConnected, error, onError }: { onConnected: () => void; 
   const [device, setDevice] = useState("cpu");
   const [downloadStatus, setDownloadStatus] = useState("");
   useEffect(() => {
-    if (!desktop) request<{ mode: string }>("/v1/session").then(v => setMode(v.mode)).catch(onError);
+    if (!desktop) request<{ mode: string; local_access_expires_at?: number | null }>("/v1/session").then(v => {
+      setMode(v.mode); setAccessExpiresAt(v.local_access_expires_at ?? null);
+    }).catch(onError);
     else native<typeof runtime>("runtime_status").then(setRuntime).catch(onError);
   }, [onError]);
   async function connect() {
@@ -104,6 +109,10 @@ function Connection({ onConnected, error, onError }: { onConnected: () => void; 
         <input type="password" autoComplete={mode === "hosted" ? "current-password" : "off"}
           value={password} onChange={e => setPassword(e.target.value)} required />
       </label>}
+      {!desktop && mode === "local" && accessExpiresAt !== null && <p className="hint">
+        Access key expires: <time dateTime={new Date(accessExpiresAt * 1000).toISOString()}>{new Date(accessExpiresAt * 1000).toLocaleString()}</time>.
+        {" "}Restart the studio with a new key after expiry. Saved voices and takes stay in your workspace.
+      </p>}
       <button className="button primary" disabled={pending}>{pending ? "Connecting…" : desktop && mode === "local" ? "Open local workspace" : "Open your studio"}{!pending && <span aria-hidden="true"> →</span>}</button>
     </form>
     {desktop && <details className="runtime-setup"><summary>First time? Install the local runtime</summary>
@@ -117,6 +126,7 @@ function Connection({ onConnected, error, onError }: { onConnected: () => void; 
       </div>}
       <p role="status">{downloadStatus}</p>
     </details>}
+    {desktop && <HostedLauncher onConnected={() => setMode("hosted")} />}
     {desktop && <CloudConnection onConnected={() => setMode("hosted")} onError={onError} />}
     {error && <div role="alert" className="error">{error}</div>}
     <p className="privacy-note">Your recordings stay private. Local mode never uploads them.</p>
@@ -126,7 +136,8 @@ function Connection({ onConnected, error, onError }: { onConnected: () => void; 
 function CloudConnection({ onConnected, onError }: { onConnected: () => void; onError: (e: unknown) => void }) {
   const [key, setKey] = useState(""); const [snapshot, setSnapshot] = useState("");
   const [secretMap, setSecretMap] = useState("{}"); const [pending, setPending] = useState(false);
-  return <details className="runtime-setup"><summary>Connect to your Daytona workspace</summary>
+  const [sessions, setSessions] = useState<CloudSession[]>();
+  return <details className="runtime-setup"><summary>Advanced: external PostgreSQL/S3 deployment</summary>
     <p>Your hosted reference and history are separate. This does not transfer local recordings.</p>
     <label>Daytona API key<input type="password" value={key} onChange={e => setKey(e.target.value)} autoComplete="off" /></label>
     <label>Controller snapshot<input value={snapshot} onChange={e => setSnapshot(e.target.value)} /></label>
@@ -139,6 +150,12 @@ function CloudConnection({ onConnected, onError }: { onConnected: () => void; on
         setKey(""); onConnected();
       } catch (e) { onError(e); } finally { setPending(false); }
     }}>{pending ? "Starting hosted workspace…" : "Start hosted workspace"}</button>
+    <button className="text-button" disabled={pending} onClick={async () => {
+      setPending(true);
+      try { setSessions(await native<CloudSession[]>("cloud_status")); }
+      catch (e) { onError(e); } finally { setPending(false); }
+    }}>Check hosted status</button>
+    {sessions && <p role="status">{sessions.length ? sessions.map(s => `${s.role}: ${s.state}`).join(" · ") : "No hosted session is running."}</p>}
   </details>;
 }
 
@@ -154,6 +171,7 @@ export default function App() {
   const [currentJob, setCurrentJob] = useState("");
   const [file, setFile] = useState<File>(); const [voiceName, setVoiceName] = useState("My voice");
   const [start, setStart] = useState(0); const [end, setEnd] = useState(15);
+  const endEdited = useRef(false);
   const [authorized, setAuthorized] = useState(false);
   const [referenceUrl, setReferenceUrl] = useState(""); const [played, setPlayed] = useState<string[]>([]);
   const [confirmDelete, setConfirmDelete] = useState<{ kind: "voice" | "job"; id: string }>();
@@ -163,6 +181,8 @@ export default function App() {
   const [update, setUpdate] = useState<{ available: boolean; version?: string; notes?: string }>();
   const [updateStatus, setUpdateStatus] = useState("");
   const [updating, setUpdating] = useState(false);
+  const [cloudStatus, setCloudStatus] = useState("");
+  const [saveState, setSaveState] = useState("");
   const activityAt = useRef(0);
   const workspaceEpoch = useRef(0);
   const deleteTrigger = useRef<HTMLElement | null>(null);
@@ -223,8 +243,8 @@ export default function App() {
     }
   }
   async function perform(action: () => Promise<unknown>) {
-    setBusy(true); setError("");
-    try { await action(); await refresh(); } catch (e) { report(e); } finally { setBusy(false); }
+    setBusy(true); setError(""); setSaveState("Saving…");
+    try { await action(); await refresh(); setSaveState("Saved"); } catch (e) { setSaveState(e instanceof ApiError && e.status === 503 ? "Storage unavailable · retry the operation" : "Not saved"); report(e); } finally { setBusy(false); }
   }
   const active = voices.find(v => v.active);
   const selectedJob = jobs.find(j => j.id === currentJob);
@@ -233,6 +253,7 @@ export default function App() {
   if (!connected) return <Connection onConnected={() => { setError(""); void refresh(); }} error={error} onError={report} />;
 
   return <div className="app" onPointerDown={activity} onKeyDown={activity}>
+    {saveState && <p className="save-status" role="status" aria-live="polite">{saveState}</p>}
     <a className="skip-link" href="#main" inert={!!confirmDelete}>Skip to workspace</a>
     <aside className="sidebar" inert={!!confirmDelete}>
       <a className="brand" href="#create" onClick={() => setPage("create")}><Glyph /><span>voice<span className="brand-light">studio</span><sup>01</sup></span></a>
@@ -308,14 +329,14 @@ export default function App() {
             {cap?.mode === "hosted" && <p className="notice">Importing here uploads this recording to your private hosted storage. Local recordings are never transferred automatically.</p>}
             <label className="dropzone"><span className="upload-mark" aria-hidden="true">↑</span><strong>{file?.name || "Choose your recording"}</strong><span>MP3 or WAV · up to 50 MB</span>
               <input type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" aria-label="Reference recording" onChange={e => {
-                setFile(e.target.files?.[0]); setStart(0); setEnd(15); setAuthorized(false);
+                setFile(e.target.files?.[0]); endEdited.current = false; setStart(0); setEnd(15); setAuthorized(false);
                 e.target.value = "";
               }} />
             </label>
-            {referenceUrl && <audio controls src={referenceUrl} aria-label="Original reference preview" onLoadedMetadata={e => setEnd(Math.min(15, e.currentTarget.duration))} />}
+            {referenceUrl && <audio controls src={referenceUrl} aria-label="Original reference preview" onLoadedMetadata={e => { if (!endEdited.current) setEnd(Math.min(15, e.currentTarget.duration)); }} />}
             <div className="form-grid"><label>Voice name<input value={voiceName} maxLength={100} onChange={e => setVoiceName(e.target.value)} /></label>
               <label>Start (seconds)<input type="number" min="0" step="0.1" value={start} onChange={e => setStart(Number(e.target.value))} /></label>
-              <label>End (seconds)<input type="number" min="5.1" step="0.1" value={end} onChange={e => setEnd(Number(e.target.value))} /></label></div>
+              <label>End (seconds)<input type="number" min="5.1" step="0.1" value={end} onFocus={() => { endEdited.current = true; }} onChange={e => { endEdited.current = true; setEnd(Number(e.target.value)); }} /></label></div>
             <label className="check-label"><input type="checkbox" checked={authorized} onChange={e => setAuthorized(e.target.checked)} />This is my voice, or I have the speaker’s authorization to use it.</label>
             <button className="button primary" disabled={!file || !authorized || !voiceName.trim() || busy} onClick={() => void perform(async () => {
               await importVoice(file!, voiceName, start, end); setFile(undefined); setAuthorized(false);
@@ -326,7 +347,7 @@ export default function App() {
             const audition = jobs.find(j => j.voice_id === voice.id && j.purpose === "audition" && j.state === "completed");
             const pending = jobs.find(j => j.voice_id === voice.id && j.purpose === "audition" && ACTIVE.has(j.state));
             const latest = jobs.find(j => j.voice_id === voice.id && j.purpose === "audition");
-            return <section className="panel reference-card" key={voice.id}><div className="panel-heading"><div><h2>{voice.name}</h2><p className="hint">{voice.details.reference_duration.toFixed(1)} sec · version {voice.id.slice(0, 6)}</p></div><span className={`tag ${voice.active ? "green" : ""}`}>{voice.active ? "ACTIVE VOICE" : "AWAITING APPROVAL"}</span></div>
+            return <section className="panel reference-card" key={voice.id}><div className="panel-heading"><div><h2>{voice.name}</h2><p className="hint">{voice.details.reference_duration.toFixed(1)} sec · version {voice.id.slice(0, 6)}</p></div><span className={`tag ${voice.active ? "accent" : ""}`}>{voice.active ? "ACTIVE VOICE" : "AWAITING APPROVAL"}</span></div>
               {voice.details.warnings.map(w => <p className="notice" key={w}>{w}</p>)}
               {audition && <Player job={audition} onPlayed={() => setPlayed(v => [...v, audition.id])} onError={report} />}
               {pending && <p role="status">{phases[pending.state]}</p>}
@@ -356,17 +377,25 @@ export default function App() {
           <div className="page-heading"><div><span className="eyebrow">BEHIND THE DESK</span><h1>Make yourself<br /><em>at home.</em></h1></div></div>
           <section className="panel"><h2>Your workspace</h2><p>{cap?.mode === "local" ? "Local processing. Your scripts and recordings stay on this device." : "On-demand Daytona processing. Your reference and history are private."}</p>
             <p className="hint">Switching mode does not move your data. Export a reference, extract reference.wav from the ZIP, then explicitly import that recording in the other workspace.</p>
-            {desktop && <div className="actions"><button className="button secondary" onClick={async () => {
+            {desktop && cap?.profile !== "hosted_daytona_single" && <div className="actions"><button className="button secondary" onClick={async () => {
               try { await native("disconnect"); resetWorkspace(); } catch (e) { report(e); }
             }}>Switch workspace</button><button className="text-button danger" onClick={async () => {
               try { await native("cloud_stop"); resetWorkspace(); } catch (e) { report(e); }
-            }}>Stop hosted session</button></div>}
+            }}>Stop hosted session</button><button className="text-button" disabled={busy} onClick={async () => {
+              setBusy(true);
+              try {
+                const sessions = await native<CloudSession[]>("cloud_status");
+                setCloudStatus(sessions.length ? sessions.map(s => `${s.role}: ${s.state}`).join(" · ") : "No hosted session is running.");
+              } catch (e) { report(e); } finally { setBusy(false); }
+            }}>Check hosted status</button></div>}
+            {cloudStatus && <p role="status">{cloudStatus}</p>}
             {cap?.mode === "hosted" && <button className="text-button" disabled={busy} onClick={async () => {
               setBusy(true);
               try { await request("/v1/auth/logout", { method: "POST" }); resetWorkspace(); }
               catch (e) { report(e); } finally { setBusy(false); }
             }}>Sign out</button>}
           </section>
+          {(desktop || cap?.mode === "local") && <HostedLauncher onConnected={resetWorkspace} />}
           <section className="panel"><div className="panel-heading"><h2>Voice engines</h2><span className="tag">{cap?.device.toUpperCase()}</span></div>
             <p>Install once, then generate offline in local mode. Downloads are pinned and verified.</p>
             {cap?.models.map(model => <div className="model-row" key={model.id}><div><strong>{modelLabels[model.id]}</strong><p className="hint">{(model.download_bytes / 1e9).toFixed(1)} GB · {model.id === "nano" ? "A smaller English engine, designed for CPU." : model.id === "turbo" ? "Faster English generation." : "English with expressive controls."}</p>

@@ -30,17 +30,20 @@ from voice_studio_core.contracts import (
     ActivationRequest,
     CapabilitiesResponse,
     DomainError,
+    DurabilityStatus,
     GenerationRequest,
     JobResponse,
     KeyRequest,
     LoginRequest,
+    OperationStatus,
+    SessionResponse,
     VoiceResponse,
 )
 from voice_studio_core.database import Artifact, Credential, Job, Repository, Voice, uid
 from voice_studio_core.storage import storage_for
 from voice_studio_engine.models import install_model, model_lock, verify_model
 
-from .auth import authenticate, digest, login
+from .auth import authenticate, digest, initialize_local_access, login
 from .jobs import job_view, maintenance, submit
 from .worker import Worker
 
@@ -65,10 +68,19 @@ def create_app(settings=None, repository=None, storage=None, engine=None):
     @asynccontextmanager
     async def lifespan(app):
         repo.initialize()
+        initialize_local_access(app)
         repo.recover()
+        if settings.profile == "hosted_daytona_single":
+            from voice_studio_core.checkpoints import DurabilityCoordinator
+            repo.durability = DurabilityCoordinator(repo, objects)
+            with repo.durability.lock:
+                maintenance(repo, objects)
+                repo.durability.checkpoint()
+                maintenance(repo, objects, True)
+                objects.cleanup_orphans([item["key"] for item in repo.durability.last["objects"]])
         worker = thread = controller = None
         if settings.worker_enabled:
-            if settings.mode == "local":
+            if settings.mode == "local" or settings.profile == "hosted_daytona_single":
                 worker = Worker(repo, objects, engine)
                 thread = threading.Thread(target=worker.run, daemon=True)
                 thread.start()
@@ -143,7 +155,10 @@ def create_app(settings=None, repository=None, storage=None, engine=None):
                     )
                 chunks.append(chunk)
             request._body = b"".join(chunks)
-        response = await call_next(request)
+        if getattr(app.state, "draining", False) and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not request.url.path.startswith("/_runtime/"):
+            return JSONResponse({"code": "draining", "message": "Studio is stopping; retry after starting it"}, status_code=503)
+        from .durability import durable_request
+        response = await durable_request(request, call_next)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
@@ -176,9 +191,12 @@ def create_app(settings=None, repository=None, storage=None, engine=None):
     def health():
         return {"status": "ok", "version": "0.1.0"}
 
-    @app.get("/v1/session")
+    @app.get("/v1/session", response_model=SessionResponse)
     def session_mode():
-        return {"mode": settings.mode}
+        return {
+            "mode": settings.mode, "profile": settings.profile,
+            "local_access_expires_at": getattr(app.state, "local_access_expires_at", None),
+        }
 
     @app.post("/v1/auth/login")
     def owner_login(body: LoginRequest, request: Request):
@@ -223,6 +241,7 @@ def create_app(settings=None, repository=None, storage=None, engine=None):
         lock = model_lock()
         return {
             "mode": settings.mode,
+            "profile": settings.profile,
             "device": settings.device,
             "models": [
                 {
@@ -368,7 +387,7 @@ def create_app(settings=None, repository=None, storage=None, engine=None):
     def activate(voice_id: str, body: ActivationRequest):
         with repo.tx(lock=True) as s:
             voice, audition = s.get(Voice, voice_id), s.get(Job, body.audition_job_id)
-            if not voice or voice.deleted:
+            if not voice or voice.deleted or (settings.profile == "hosted_daytona_single" and voice.created_at <= time.time() - 30 * 86400):
                 raise DomainError("not_found", "Voice not found", 404)
             if (
                 not audition
@@ -403,7 +422,7 @@ def create_app(settings=None, repository=None, storage=None, engine=None):
     def export_voice(voice_id: str):
         with repo.tx() as s:
             voice = s.get(Voice, voice_id)
-            if not voice or voice.deleted:
+            if not voice or voice.deleted or (settings.profile == "hosted_daytona_single" and voice.created_at <= time.time() - 30 * 86400):
                 raise DomainError("not_found", "Voice not found", 404)
         data = io.BytesIO()
         with zipfile.ZipFile(data, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -586,13 +605,37 @@ def create_app(settings=None, repository=None, storage=None, engine=None):
             "estimate_only": True,
             "percent_used": round(100 * ratio, 1),
             "budget_alert": "limit" if ratio >= 1 else "warning" if ratio >= 0.8 else None,
-            "excludes": ["database", "object storage", "network transfer"],
+            "excludes": (["persistent volumes", "snapshot storage", "network transfer"] if settings.profile == "hosted_daytona_single" else ["database", "object storage", "network transfer"]),
         }
 
     @app.post("/v1/maintenance", dependencies=[Depends(authenticate)])
     def cleanup():
         maintenance(repo, objects)
         return {"ok": True}
+
+    from .runtime_api import install_runtime_routes
+    install_runtime_routes(app)
+    from .local_launcher import install_routes
+    install_routes(app)
+
+    @app.get("/v1/durability", response_model=DurabilityStatus, dependencies=[Depends(authenticate)])
+    def durability_status():
+        coordinator = repo.durability
+        return {"enabled": coordinator is not None,
+                "state": "storage_unavailable" if coordinator and coordinator.blocked else "saved",
+                "checkpoint": ({"revision": coordinator.last["revision"], "created_at": coordinator.last["created_at"], "schema_version": coordinator.last["schema"]} if coordinator and coordinator.last else None)}
+
+    @app.get("/v1/operations/{identifier}", response_model=OperationStatus, dependencies=[Depends(authenticate)])
+    def operation_status(identifier: str):
+        from sqlalchemy import text
+        if not repo.durability:
+            raise DomainError("not_found", "Operation not found", 404)
+        with repo.engine.connect() as connection:
+            revision = connection.execute(text("SELECT revision FROM operation_receipts WHERE id=:id"), {"id": identifier}).scalar_one_or_none()
+        if revision is None:
+            raise DomainError("not_found", "Operation not found", 404)
+        saved = repo.durability.last and repo.durability.last["revision"] >= revision and not repo.durability.blocked
+        return {"operation_id": identifier, "revision": revision, "state": "saved" if saved else "saving"}
 
     if settings.static_dir.is_dir():
         app.mount("/", StaticFiles(directory=settings.static_dir, html=True), name="studio")

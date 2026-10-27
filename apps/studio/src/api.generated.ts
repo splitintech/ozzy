@@ -21,6 +21,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/launcher/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Deployments */
+        get: operations["deployments_launcher_deployments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/launcher/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Launch */
+        post: operations["launch_launcher_operations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/launcher/operations/{identifier}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Progress */
+        get: operations["progress_launcher_operations__identifier__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ready": {
         parameters: {
             query?: never;
@@ -115,6 +166,23 @@ export interface paths {
         };
         /** Capabilities */
         get: operations["capabilities_v1_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/durability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Durability Status */
+        get: operations["durability_status_v1_durability_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -254,6 +322,23 @@ export interface paths {
         };
         /** Openapi */
         get: operations["openapi_v1_openapi_json_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/operations/{identifier}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Operation Status */
+        get: operations["operation_status_v1_operations__identifier__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -428,6 +513,28 @@ export interface components {
             orchestration_error?: string | null;
             /** Performance Qualified */
             performance_qualified: boolean;
+            /** Profile */
+            profile?: ("local" | "hosted_external" | "hosted_daytona_single") | null;
+        };
+        /** CheckpointStatus */
+        CheckpointStatus: {
+            /** Created At */
+            created_at: number;
+            /** Revision */
+            revision: number;
+            /** Schema Version */
+            schema_version: number;
+        };
+        /** DurabilityStatus */
+        DurabilityStatus: {
+            checkpoint?: components["schemas"]["CheckpointStatus"] | null;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "saved" | "storage_unavailable" | "restoring";
         };
         /** ErrorResponse */
         ErrorResponse: {
@@ -520,6 +627,24 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** LaunchRequest */
+        LaunchRequest: {
+            /** Action */
+            action: string;
+            /** Api Key */
+            api_key?: string | null;
+            /**
+             * Deployment
+             * @default my-studio
+             */
+            deployment: string;
+            /** Owner Password */
+            owner_password?: string | null;
+            /** Region */
+            region?: string | null;
+            /** Source */
+            source?: string | null;
+        };
         /** Limits */
         Limits: {
             /** Message Seconds */
@@ -560,6 +685,18 @@ export interface components {
             /** Supports Exaggeration */
             supports_exaggeration: boolean;
         };
+        /** OperationStatus */
+        OperationStatus: {
+            /** Operation Id */
+            operation_id: string;
+            /** Revision */
+            revision: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "saved" | "saving";
+        };
         /** ReferenceDetails */
         ReferenceDetails: {
             /** Excerpt End */
@@ -574,6 +711,21 @@ export interface components {
             warnings: string[];
         } & {
             [key: string]: unknown;
+        };
+        /** SessionResponse */
+        SessionResponse: {
+            /** Local Access Expires At */
+            local_access_expires_at?: number | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "local" | "hosted";
+            /**
+             * Profile
+             * @enum {string}
+             */
+            profile: "local" | "hosted_external" | "hosted_daytona_single";
         };
         /** SynthesisOptions */
         SynthesisOptions: {
@@ -652,6 +804,90 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    deployments_launcher_deployments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    launch_launcher_operations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LaunchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    progress_launcher_operations__identifier__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identifier: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -796,6 +1032,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CapabilitiesResponse"];
+                };
+            };
+        };
+    };
+    durability_status_v1_durability_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurabilityStatus"];
                 };
             };
         };
@@ -1103,6 +1359,37 @@ export interface operations {
             };
         };
     };
+    operation_status_v1_operations__identifier__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identifier: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     session_mode_v1_session_get: {
         parameters: {
             query?: never;
@@ -1118,7 +1405,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SessionResponse"];
                 };
             };
         };

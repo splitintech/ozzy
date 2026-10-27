@@ -169,6 +169,10 @@ class S3Storage:
 
 
 def storage_for(settings):
-    if settings.mode == "hosted":
+    if settings.storage_backend == "daytona_volume":
+        from .volume_storage import VolumeStorage
+
+        return VolumeStorage(settings.volume_dir)
+    if settings.storage_backend == "s3":
         return S3Storage(settings)
     return LocalStorage(settings.data_dir / "objects")

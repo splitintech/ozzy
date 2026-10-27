@@ -50,12 +50,29 @@ def verify_model(root, name, deep=True):
 def install_model(root, name, progress=None):
     if name not in model_lock()["models"]:
         raise DomainError("unknown_model", "Choose original, turbo, or nano", 422)
+    from filelock import FileLock, Timeout
+
+    target = model_path(root, name)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # CLI and API installations share this OS lock, including across processes.
+    # A crashed installer releases it automatically; the next run can recover.
+    try:
+        with FileLock(str(target.parent / ".install.lock"), timeout=0):
+            return _install_model(root, name, progress)
+    except Timeout:
+        raise DomainError("install_active", "This model is already being installed", 409) from None
+
+
+def _install_model(root, name, progress=None):
     os.environ.setdefault("HF_HOME", str(Path(root).resolve() / ".download-cache"))
     from huggingface_hub import hf_hub_download
 
     spec = model_lock()["models"][name]
     target = model_path(root, name)
     target.parent.mkdir(parents=True, exist_ok=True)
+    old = target.with_name(target.name + ".old")
+    if old.exists() and not target.exists():
+        os.replace(old, target)
     if verify_model(root, name):
         return target
     required = 2 * sum(item["size"] for item in spec["files"]) + 512 * 1024 * 1024
@@ -91,7 +108,6 @@ def install_model(root, name, progress=None):
                 }
             )
         )
-        old = target.with_name(target.name + ".old")
         if old.exists():
             shutil.rmtree(old)
         if target.exists():

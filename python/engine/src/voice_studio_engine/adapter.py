@@ -67,6 +67,7 @@ class ChatterboxEngine:
         started = time.monotonic()
         progress("loading")
         model = self.load(payload["model_dir"], options.model, payload["device"])
+        loaded_at = time.monotonic()
         reference = Path(payload["reference"])
         if sha256(reference) != payload["reference_sha256"]:
             raise DomainError("reference_integrity", "Reference checksum mismatch", 422)
@@ -140,6 +141,8 @@ class ChatterboxEngine:
             "segment_durations": durations,
             "watermark": "upstream-perth-enabled",
             "timings": {
+                "model_load_seconds": loaded_at - started,
+                "reference_preparation_seconds": ready - loaded_at,
                 "load_and_reference_seconds": ready - started,
                 "generation_seconds": ended - ready,
                 "engine_seconds": ended - started,

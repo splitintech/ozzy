@@ -13,7 +13,24 @@ export async function native<T>(command: string, args?: Record<string, unknown>)
   return invoke<T>(command, args);
 }
 
+const pendingKeys = new Map<string, string>();
+
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let operation = "";
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(init.method || "") && !path.startsWith("/launcher/")) {
+    let content = typeof init.body === "string" ? init.body : "";
+    if (init.body instanceof FormData) {
+      content = JSON.stringify(await Promise.all(Array.from(init.body.entries()).map(async ([key, value]) => [key, typeof value === "string" ? value : Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await value.arrayBuffer())))])));
+    }
+    operation = `${init.method}:${path}:${content}`;
+    const headers = new Headers(init.headers);
+    if (!headers.has("Idempotency-Key")) {
+      if (pendingKeys.size > 32) pendingKeys.delete(pendingKeys.keys().next().value!);
+      const key = pendingKeys.get(operation) || crypto.randomUUID();
+      pendingKeys.set(operation, key); headers.set("Idempotency-Key", key);
+    }
+    init = { ...init, headers };
+  }
   let response: Response;
   if (desktop) {
     const result = await native<{ status: number; body: string }>("api_request", {
@@ -28,18 +45,26 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     response = await fetch(path, { ...init, headers, credentials: "same-origin" });
   }
   if (!response.ok) {
+    if (operation && response.status >= 400 && response.status < 500 && response.status !== 429) pendingKeys.delete(operation);
     const error = await response.json().catch(() => ({}));
     const detail = Array.isArray(error.detail) ? error.detail.map((v: { msg: string }) => v.msg).join("; ") : error.detail;
     throw new ApiError(error.code || "request_failed", error.message || detail || `Request failed (${response.status})`, response.status);
   }
+  if (operation) pendingKeys.delete(operation);
   return response.json();
 }
 
 export async function importVoice(file: File, name: string, start: number, end: number): Promise<Voice> {
   if (desktop) {
-    const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-    const result = await native<{ status: number; body: string }>("import_voice", { bytes, name, start, end, authorized: true });
+    const buffer = await file.arrayBuffer();
+    const signature = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", buffer))).join(",");
+    const operation = `import:${name}:${start}:${end}:${signature}`;
+    const idempotencyKey = pendingKeys.get(operation) || crypto.randomUUID();
+    pendingKeys.set(operation, idempotencyKey);
+    const bytes = Array.from(new Uint8Array(buffer));
+    const result = await native<{ status: number; body: string }>("import_voice", { bytes, name, start, end, authorized: true, idempotencyKey });
     if (result.status >= 400) { const error = JSON.parse(result.body); throw new Error(error.message || "Import failed"); }
+    pendingKeys.delete(operation);
     return JSON.parse(result.body);
   }
   const form = new FormData();
@@ -72,7 +97,7 @@ export const api = {
   jobs: () => request<Job[]>("/v1/generations"),
   generate: (voice: string, text: string, options: Options, purpose = "message") =>
     request<Job>("/v1/generations", {
-      method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() },
+      method: "POST",
       body: JSON.stringify({ voice_id: voice, text, options, purpose }),
     }),
   cancel: (id: string) => request<Job>(`/v1/generations/${id}/cancel`, { method: "POST" }),

@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "voice-studio-engine"
 version = "0.1.0"
 requires-python = ">=3.11,<3.12"
-dependencies = ["voice-studio-core", "huggingface-hub>=0.34,<2"]
+dependencies = ["voice-studio-core", "huggingface-hub>=0.34,<2", "filelock>=4.2,<5"]
 
 [project.optional-dependencies]
 inference = [

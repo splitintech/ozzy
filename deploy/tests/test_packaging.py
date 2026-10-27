@@ -235,3 +235,43 @@ def test_ffmpeg_rejects_traversal_before_writing(tmp_path):
     with pytest.raises(ValueError, match="Unsafe"):
         module.extract_binaries(archive, tmp_path / "out")
     assert not (tmp_path / "out").exists()
+
+
+def test_macos_audit_rejects_runtime_newer_than_advertised_os(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    spec = importlib.util.spec_from_file_location(
+        "verify_macos_links", SCRIPTS.parent / "deploy/verify_macos_links.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    (tmp_path / "binary").write_bytes(b"\xcf\xfa\xed\xfe" + b"fixture")
+    load_commands = "cmd LC_BUILD_VERSION\n minos 26.0\ncmd LC_LOAD_DYLIB\n name /usr/lib/libSystem.B.dylib (offset 24)\n"
+    monkeypatch.setattr(module.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=load_commands))
+    assert module.verify(tmp_path)["minimum_macos"] == "26.0.0"
+    with pytest.raises(ValueError, match="advertised minimum"):
+        module.verify(tmp_path, "13.0")
+
+
+def test_macos_audit_repairs_only_rpaths_and_resigns(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    spec = importlib.util.spec_from_file_location(
+        "verify_macos_links", SCRIPTS.parent / "deploy/verify_macos_links.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    (tmp_path / "binary").write_bytes(b"\xcf\xfa\xed\xfe" + b"fixture")
+    calls = []
+
+    def run(command, **_):
+        calls.append(command)
+        return SimpleNamespace(stdout="cmd LC_RPATH\n path /opt/build-tool/lib (offset 12)\n")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    with pytest.raises(ValueError, match="External development"):
+        module.verify(tmp_path)
+    result = module.verify(tmp_path, repair_rpaths=True)
+    assert len(result["repaired_rpaths"]) == 1
+    assert any(c[:3] == ["install_name_tool", "-delete_rpath", "/opt/build-tool/lib"] for c in calls)
+    assert any(c[:4] == ["codesign", "--force", "--sign", "-"] for c in calls)

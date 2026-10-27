@@ -119,6 +119,11 @@ def main():
     parser.add_argument("--inventory-only", action="store_true")
     parser.add_argument("--uv", default="uv")
     args = parser.parse_args()
+    if not args.inventory_only:
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, check=True,
+                                capture_output=True, text=True).stdout
+        if status.strip():
+            parser.error("Source releases require a clean committed checkout so wheels and the source archive match. Use --inventory-only for development notices.")
     inventory(args.output)
     if not args.inventory_only:
         for name in ("core", "engine", "service", "cli"):

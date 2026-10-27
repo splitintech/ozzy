@@ -44,7 +44,7 @@ def evaluate(scores, hosted=None):
             len(samples) < len(scores)
             or not samples
             or any(
-                not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0 for v in samples
+                isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0 for v in samples
             )
         ):
             failures.append(

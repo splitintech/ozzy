@@ -129,6 +129,9 @@ class Repository:
         kwargs = {"pool_pre_ping": True}
         if settings.database_url.startswith("sqlite"):
             kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
+        else:
+            kwargs.update(pool_size=settings.pool_size, max_overflow=0, pool_timeout=30)
+        self.durability = None
         self.engine = create_engine(settings.database_url, **kwargs)
         self.sqlite = self.engine.dialect.name == "sqlite"
         if self.sqlite:
@@ -148,7 +151,8 @@ class Repository:
     def initialize(self):
         from .migrations import migrate
 
-        migrate(self.engine)
+        if self.settings.migrate_on_start:
+            migrate(self.engine)
         with self.sessions.begin() as s:
             if not self.sqlite:
                 from sqlalchemy import text
@@ -157,7 +161,7 @@ class Repository:
             if not s.get(Runtime, 1):
                 s.add(Runtime(id=1))
         with self.tx() as s:
-            if s.get(Runtime, 1).schema_version != 1:
+            if s.get(Runtime, 1).schema_version not in {1, 2}:
                 raise RuntimeError("Unsupported schema version; run the matching release migration")
 
     @contextmanager

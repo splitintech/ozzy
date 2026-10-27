@@ -143,6 +143,22 @@
           "performance_qualified": {
             "title": "Performance Qualified",
             "type": "boolean"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "enum": [
+                  "local",
+                  "hosted_external",
+                  "hosted_daytona_single"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile"
           }
         },
         "required": [
@@ -153,6 +169,62 @@
           "performance_qualified"
         ],
         "title": "CapabilitiesResponse",
+        "type": "object"
+      },
+      "CheckpointStatus": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "created_at",
+          "schema_version"
+        ],
+        "title": "CheckpointStatus",
+        "type": "object"
+      },
+      "DurabilityStatus": {
+        "properties": {
+          "checkpoint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckpointStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "saved",
+              "storage_unavailable",
+              "restoring"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "state"
+        ],
+        "title": "DurabilityStatus",
         "type": "object"
       },
       "ErrorResponse": {
@@ -434,6 +506,70 @@
         "title": "KeyRequest",
         "type": "object"
       },
+      "LaunchRequest": {
+        "properties": {
+          "action": {
+            "pattern": "^(setup|start|status|stop|backup)$",
+            "title": "Action",
+            "type": "string"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "deployment": {
+            "default": "my-studio",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "title": "Deployment",
+            "type": "string"
+          },
+          "owner_password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Password"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "LaunchRequest",
+        "type": "object"
+      },
       "Limits": {
         "properties": {
           "message_seconds": {
@@ -535,6 +671,33 @@
         "title": "ModelCapability",
         "type": "object"
       },
+      "OperationStatus": {
+        "properties": {
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "saved",
+              "saving"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "state",
+          "revision"
+        ],
+        "title": "OperationStatus",
+        "type": "object"
+      },
       "ReferenceDetails": {
         "additionalProperties": true,
         "properties": {
@@ -570,6 +733,44 @@
           "excerpt_end"
         ],
         "title": "ReferenceDetails",
+        "type": "object"
+      },
+      "SessionResponse": {
+        "properties": {
+          "local_access_expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Access Expires At"
+          },
+          "mode": {
+            "enum": [
+              "local",
+              "hosted"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "profile": {
+            "enum": [
+              "local",
+              "hosted_external",
+              "hosted_daytona_single"
+            ],
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "profile"
+        ],
+        "title": "SessionResponse",
         "type": "object"
       },
       "SynthesisOptions": {
@@ -735,6 +936,95 @@
         "summary": "Health"
       }
     },
+    "/launcher/deployments": {
+      "get": {
+        "operationId": "deployments_launcher_deployments_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Deployments"
+      }
+    },
+    "/launcher/operations": {
+      "post": {
+        "operationId": "launch_launcher_operations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LaunchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Launch"
+      }
+    },
+    "/launcher/operations/{identifier}": {
+      "get": {
+        "operationId": "progress_launcher_operations__identifier__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Progress"
+      }
+    },
     "/ready": {
       "get": {
         "operationId": "readiness_ready_get",
@@ -872,6 +1162,24 @@
           }
         },
         "summary": "Capabilities"
+      }
+    },
+    "/v1/durability": {
+      "get": {
+        "operationId": "durability_status_v1_durability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DurabilityStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Durability Status"
       }
     },
     "/v1/generations": {
@@ -1219,6 +1527,45 @@
         "summary": "Openapi"
       }
     },
+    "/v1/operations/{identifier}": {
+      "get": {
+        "operationId": "operation_status_v1_operations__identifier__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operation Status"
+      }
+    },
     "/v1/session": {
       "get": {
         "operationId": "session_mode_v1_session_get",
@@ -1226,7 +1573,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
               }
             },
             "description": "Successful Response"

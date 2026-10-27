@@ -38,3 +38,22 @@ def test_generate_accepts_documented_options_without_sending_unauthenticated_req
     result = CliRunner().invoke(app, ["generate", "--text", "Hello", "--voice-id", "version"])
     assert result.exit_code == 2
     assert "Set VOICE_API_KEY or VOICE_LOCAL_TOKEN" in result.output
+
+
+def test_local_generates_distinct_256_bit_keys_and_explains_expiry(monkeypatch, tmp_path):
+    import re
+
+    from voice_studio_cli import main
+    from voice_studio_core.config import Settings
+
+    captured = []
+    monkeypatch.setattr(main, "settings", lambda: Settings(_env_file=None, data_dir=tmp_path))
+    monkeypatch.setattr(main, "serve_app", captured.append)
+    for _ in range(2):
+        result = CliRunner().invoke(app, ["local"])
+        assert result.exit_code == 0, result.output
+        assert "at most 480 minutes" in result.output
+        assert "does not renew it" in result.output
+    tokens = [c.local_token.get_secret_value() for c in captured]
+    assert tokens[0] != tokens[1]
+    assert all(re.fullmatch(r"[A-Za-z0-9_-]{43}", token) for token in tokens)

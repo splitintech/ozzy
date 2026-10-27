@@ -34,3 +34,15 @@ build/
 *.tsbuildinfo
 deploy/tauri.candidate.generated.json
 deploy/tauri.preview.generated.json
+
+# Local databases, recovery bundles and private recording formats
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.vsr
+*.pem
+*.flac
+*.m4a
+*.ogg

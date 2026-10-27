@@ -185,3 +185,30 @@ test("authentication errors and invalid audio are recoverable and keyboard navig
   await page.getByRole("button", { name: "Dismiss error" }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
+
+test("localhost hosted launcher opens a separate studio and preserves local history", async ({ page, context }, testInfo) => {
+  await context.route("https://hosted.fixture.invalid/**", route => route.fulfill({ contentType: "text/html", body: "<h1>Hosted fixture studio</h1>" }));
+  await page.route("**/launcher/operations", async route => {
+    const input = route.request().postDataJSON();
+    expect(input.action).toBe("start");
+    expect(input.api_key).toBeNull();
+    expect(route.request().headers().authorization).toBe(`Bearer ${token}`);
+    await route.fulfill({ json: { id: "browser-test", state: "running" } });
+  });
+  await page.route("**/launcher/operations/browser-test", route => route.fulfill({ json: { id: "browser-test", state: "completed", phase: "ready", result: { state: "ready", url: "https://hosted.fixture.invalid/studio" } } }));
+  await connect(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const launcher = page.getByRole("region", { name: "Hosted studio launcher" });
+  await expect(launcher).toBeVisible();
+  const start = launcher.getByRole("button", { name: "Start hosted studio" });
+  await start.focus();
+  const opened = context.waitForEvent("page");
+  await page.keyboard.press("Enter");
+  const hosted = await opened;
+  await expect(hosted).toHaveURL("https://hosted.fixture.invalid/studio");
+  await expect(page).toHaveURL("http://127.0.0.1:18765/");
+  await expect(launcher.getByRole("status")).toContainText("API ready");
+  await screenshot(page, "hosted-launcher", testInfo.project.name);
+  expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
+  await hosted.close();
+});
