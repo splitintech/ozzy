@@ -24,6 +24,7 @@ Ozzy is the repository for **Voice Studio**: an MIT-licensed application that tu
 - **Work locally.** SQLite, recordings, and generated audio stay on your computer. After installing the runtime and model assets, generation uses local files; failed local inference does not upload work to a hosted fallback.
 - **Launch a hosted studio.** Set up, start, inspect, back up, stop, recover, update, and roll back a Daytona deployment through the CLI or launch controls.
 - **Integrate with scripts.** Submit jobs through an authenticated HTTP API or the CLI; use idempotency keys for retries and revoke integration keys in Settings.
+- **Embed an in-app voice agent.** Keep STT and the LLM in your app. Ozzy only clones and speaks. See [in-app voice agents](docs/in-app-voice-agent.md) and [examples/in-app-agent](examples/in-app-agent). This is not OpenAI Realtime and not a Dograh/Vapi workflow builder.
 
 The application currently targets short messages: **2,000 characters, 280 words, and up to 120 seconds of generated audio**. Reference uploads are limited to 50 MiB and ten minutes before excerpt selection. Quality and generation time depend on the reference, model, hardware, and script; there is no real-time performance guarantee.
 
@@ -51,7 +52,7 @@ npm run build
 uv sync --locked --all-packages --extra inference
 ```
 
-Inference dependencies are substantial. Allow room for the Python environment, model downloads, temporary staging files, and your recordings. A private repository requires GitHub access before cloning.
+Inference dependencies are substantial. Allow room for the Python environment, model downloads, temporary staging files, and your recordings. Take a copy with `git clone` or a GitHub fork. Do not delete this upstream repository or rewrite its published history. See [repository policy](docs/repository-policy.md).
 
 ### 3. Install Nano and start
 
@@ -196,6 +197,8 @@ See [release packaging](docs/release.md) for FFmpeg provenance, runtime archives
 ## API and CLI
 
 The API uses versioned routes including `/v1/voices`, `/v1/generations`, `/v1/artifacts`, `/v1/capabilities`, and `/v1/session`. Generation returns a job ID; clients poll until completion and download verified artifacts. Supply `Idempotency-Key` for retryable mutations. Keep bearer credentials and signed hosted URLs out of logs.
+
+To speak inside another product, do not send live audio to OpenAI. Transcribe locally, write a short text reply, then generate with Chatterbox Original at `exaggeration=0.5`, `cfg_weight=0.5`, `temperature=0.8`, `seed=42`. A copy-paste client is in [examples/in-app-agent](examples/in-app-agent).
 
 Create an integration key in **Settings** and supply it through a protected environment as `VOICE_API_KEY` (or use a valid `VOICE_LOCAL_TOKEN`). Then:
 
