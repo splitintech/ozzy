@@ -388,7 +388,7 @@ def test_mutation_ack_and_retry_at_every_checkpoint_boundary(
 def test_repeated_setup_reuses_resources_and_password(tmp_path, monkeypatch):
     sdk = Mock()
     sdk.snapshot.get.return_value = NS(
-        id="snapshot-id", state="active", cpu=4, mem=8, disk=20, gpu=0
+        id="snapshot-id", state="active", cpu=4, mem=8, disk=10, gpu=0
     )
     from daytona import DaytonaNotFoundError
 
@@ -436,6 +436,53 @@ def test_stopped_sandbox_restarts_without_rebuilding_or_deleting(tmp_path):
     deployment.sdk.create.assert_not_called()
     deployment.sdk.snapshot.create.assert_not_called()
     sandbox.fs.upload_file.assert_not_called()
+
+
+def test_provider_bootstrap_reconnect_does_not_upload_owner_secrets(tmp_path):
+    deployment = manager(tmp_path)
+    manifest = deployment.load("test")
+    manifest.on_demand_bootstrap = True
+    deployment.save(manifest)
+    deployment.vault.get = Mock(wraps=deployment.vault.get)
+    sandbox = Mock(id="sandbox", state="stopped")
+    sandbox.process.exec.side_effect = [
+        NS(exit_code=1, result="not running"),
+        NS(exit_code=0, result="voice-bootstrap-present"),
+        NS(exit_code=0, result='{"ready":true}'),
+    ]
+    sandbox.process.execute_session_command.return_value = NS(cmd_id="supervisor")
+    sandbox.create_signed_preview_url.return_value = NS(url="https://private.example/studio")
+    deployment.sdk.list.return_value = [sandbox]
+    assert deployment.start("test")["state"] == "ready"
+    # The owner CLI still authenticates to Daytona; bootstrap does not read it again.
+    assert deployment.vault.get.call_count == 1
+    sandbox.fs.upload_file.assert_not_called()
+    request = sandbox.process.execute_session_command.call_args.args[1]
+    assert request.command == "/opt/voice/.venv/bin/voice single supervise"
+
+
+def test_narrow_lifecycle_key_reaches_bootstrap_without_changing_owner_vault(tmp_path):
+    deployment = manager(tmp_path)
+    manifest = deployment.load("test")
+    manifest.on_demand_bootstrap = True
+    deployment.save(manifest)
+    deployment.lifecycle_api_key = "narrow-lifecycle-key"
+    deployment.vault.values["test"]["unrelated_secret"] = "must-not-upload"
+    sandbox = Mock(id="sandbox", state="started")
+    sandbox.process.exec.side_effect = [
+        NS(exit_code=1, result="not running"),
+        NS(exit_code=1, result="missing"),
+        NS(exit_code=0, result='{"ready":true}'),
+    ]
+    sandbox.process.execute_session_command.return_value = NS(cmd_id="supervisor")
+    sandbox.create_signed_preview_url.return_value = NS(url="https://private.example/studio")
+    deployment.sdk.list.return_value = [sandbox]
+    deployment.start("test")
+    payload = json.loads(sandbox.fs.upload_file.call_args.args[0])
+    assert payload["api_key"] == "narrow-lifecycle-key"
+    assert payload["backup_key"] == KEY
+    assert "unrelated_secret" not in payload
+    assert deployment.vault.get("test")["api_key"] == "provider-secret"
 
 
 def test_failed_candidate_does_not_stop_current_writer(tmp_path, monkeypatch):

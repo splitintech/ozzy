@@ -17,6 +17,8 @@ from voice_studio_core.checkpoints import CheckpointStore
 from voice_studio_core.contracts import DomainError
 from voice_studio_core.volume_storage import VolumeStorage
 
+from .bootstrap import load_bootstrap
+
 CONTROL = Path("/run/voice-control/control.sock")
 BOOTSTRAP = Path("/dev/shm/voice-bootstrap/config.json")
 PGDATA = Path("/var/lib/voice/postgresql")
@@ -307,8 +309,7 @@ def supervise():
     CONTROL.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (CONTROL.parent / "writer.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # Local disk, never FUSE.
-        payload = json.loads(BOOTSTRAP.read_text())
-        BOOTSTRAP.unlink()
+        payload = load_bootstrap(BOOTSTRAP)
         supervisor = Supervisor(payload)
         supervisor.start()
         CONTROL.unlink(missing_ok=True)
