@@ -7,6 +7,8 @@ import pytest
 from voice_studio_core.contracts import DomainError
 from voice_studio_service.bootstrap import load_bootstrap
 
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="Hosted supervisor requires Unix ownership and permissions")
+
 
 def incoming(tmp_path, *, enabled=True):
     ram = tmp_path / "ram" / "config.json"
