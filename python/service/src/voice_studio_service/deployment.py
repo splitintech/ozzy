@@ -95,8 +95,9 @@ class DeploymentManifest(BaseModel):
     architecture: Literal["linux/amd64"] = "linux/amd64"
     cpu: Literal[4] = 4
     memory: Literal[8] = 8
-    disk: Literal[20] = 20
+    disk: Literal[10] = 10
     idle_seconds: int = 600
+    on_demand_bootstrap: bool = False
     retention_days: int = 30
     application_version: str = "0.1.0"
     database_schema: int = 2
@@ -190,11 +191,14 @@ class Vault:
 
 
 class DeploymentManager:
-    def __init__(self, root=None, vault=None, sdk=None, progress=None):
+    def __init__(self, root=None, vault=None, sdk=None, progress=None, lifecycle_api_key=None):
         self.root = Path(root or Path.home() / ".voice-studio/deployments")
         self.vault = vault or Vault()
         self.sdk = sdk
         self.progress = progress or (lambda phase: None)
+        # Optional narrow lifecycle key is transferred in memory, never saved
+        # in the owner manifest or substituted for the owner's provisioning key.
+        self.lifecycle_api_key = lifecycle_api_key
 
     def path(self, name):
         DeploymentManifest(deployment=name)
@@ -237,13 +241,26 @@ class DeploymentManager:
                 "account_required", "An organization-scoped Daytona API key is required", 400
             )
         organizations = OrganizationsApi(api)
-        organization = organizations.get_organization(identity.organization_id)
         if manifest.account and manifest.account != identity.organization_id:
             raise DomainError(
                 "account_mismatch", "This deployment belongs to another Daytona account", 409
             )
         manifest.account = identity.organization_id
-        manifest.region = manifest.region or organization.default_region_id
+        org_limits = {"cpu": 4, "memory": 8, "disk": 10}
+        default_region = "us"
+        try:
+            organization = organizations.get_organization(identity.organization_id)
+            org_limits = {
+                "cpu": organization.max_cpu_per_sandbox,
+                "memory": organization.max_memory_per_sandbox,
+                "disk": organization.max_disk_per_sandbox,
+            }
+            default_region = organization.default_region_id or default_region
+        except Exception as exc:
+            status = getattr(exc, "status", None) or getattr(exc, "status_code", None)
+            if status not in {401, 403} and "401" not in str(exc) and "403" not in str(exc):
+                raise
+        manifest.region = manifest.region or default_region
         usage = organizations.get_organization_usage_overview(identity.organization_id)
         region = next(
             (
@@ -260,9 +277,7 @@ class DeploymentManager:
             )
         for field in ("cpu", "memory", "disk"):
             requested = getattr(manifest, field)
-            maximum = getattr(region, f"max_{field}_per_sandbox") or getattr(
-                organization, f"max_{field}_per_sandbox"
-            )
+            maximum = getattr(region, f"max_{field}_per_sandbox") or org_limits[field]
             available = getattr(region, f"total_{field}_quota") - getattr(
                 region, f"current_{field}_usage"
             )
@@ -584,22 +599,36 @@ class DeploymentManager:
             # Never delete/restart a running supervisor. flock also guards remote races.
             status = sandbox.process.exec("/opt/voice/.venv/bin/voice single control status")
             if status.exit_code != 0:
-                credential = self.vault.get(name)
-                sandbox.fs.create_folder("/dev/shm/voice-bootstrap", "0700")
-                payload = {
-                    **credential,
-                    "deployment": manifest.model_dump(),
-                    "sandbox_id": sandbox.id,
-                }
-                sandbox.fs.upload_file(
-                    json.dumps(payload).encode(), "/dev/shm/voice-bootstrap/config.json"
-                )
+                provider_bundle = False
+                if manifest.on_demand_bootstrap:
+                    probe = sandbox.process.exec(
+                        "test -r /var/lib/voice-control/bootstrap.json && "
+                        "printf voice-bootstrap-present"
+                    )
+                    provider_bundle = (
+                        probe.exit_code == 0 and probe.result.strip() == "voice-bootstrap-present"
+                    )
+                if not provider_bundle:
+                    credential = self.vault.get(name)
+                    sandbox.fs.create_folder("/dev/shm/voice-bootstrap", "0700")
+                    payload = {
+                        key: credential[key]
+                        for key in ("api_key", "owner_password_hash", "session_secret", "backup_key")
+                    }
+                    if self.lifecycle_api_key:
+                        payload["api_key"] = self.lifecycle_api_key
+                    payload.update(deployment=manifest.model_dump(), sandbox_id=sandbox.id)
+                    sandbox.fs.upload_file(
+                        json.dumps(payload).encode(), "/dev/shm/voice-bootstrap/config.json"
+                    )
                 session_name = "voice-single-" + secrets.token_hex(8)
                 sandbox.process.create_session(session_name)
                 result = sandbox.process.execute_session_command(
                     session_name,
                     SessionExecuteRequest(
-                        command="chmod 600 /dev/shm/voice-bootstrap/config.json && /opt/voice/.venv/bin/voice single supervise",
+                        command=(
+                            "" if provider_bundle else "chmod 600 /dev/shm/voice-bootstrap/config.json && "
+                        ) + "/opt/voice/.venv/bin/voice single supervise",
                         run_async=True,
                         suppress_input_echo=True,
                     ),
@@ -686,7 +715,7 @@ class DeploymentManager:
                         image=Image.from_dockerfile(
                             Path(context) / "Dockerfile", strict_context=True
                         ),
-                        resources=Resources(cpu=4, memory=8, disk=20),
+                        resources=Resources(cpu=4, memory=8, disk=10),
                         region_id=manifest.region,
                     ),
                     timeout=1800,
@@ -702,7 +731,7 @@ class DeploymentManager:
 
     @staticmethod
     def validate_snapshot(snapshot):
-        if (snapshot.cpu, snapshot.mem, snapshot.disk, snapshot.gpu) != (4, 8, 20, 0):
+        if (snapshot.cpu, snapshot.mem, snapshot.disk, snapshot.gpu) != (4, 8, 10, 0):
             raise DomainError(
                 "snapshot_resources",
                 "Snapshot resources differ from the approved CPU allocation",
