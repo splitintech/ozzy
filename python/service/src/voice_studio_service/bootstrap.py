@@ -90,6 +90,10 @@ def load_bootstrap(ram, persistent=None):
         incoming = ram.exists()
         payload = _read(ram if incoming else persistent)
         enabled = payload["deployment"].get("on_demand_bootstrap") is True
+        # A cold wake must require its verified checkpoint, never silently
+        # initialize storage after an acknowledged deployment loses one.
+        if enabled and payload["deployment"].get("initialized") is not True:
+            raise _invalid()
         if not incoming and not enabled:
             raise _invalid()
         if incoming:

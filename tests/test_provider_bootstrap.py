@@ -46,6 +46,15 @@ def test_legacy_bootstrap_stays_ephemeral(tmp_path):
         load_bootstrap(ram, persistent)
 
 
+def test_opt_in_requires_an_already_initialized_deployment(tmp_path):
+    ram, persistent, payload = incoming(tmp_path)
+    payload["deployment"]["initialized"] = False
+    ram.write_text(json.dumps(payload))
+    with pytest.raises(DomainError):
+        load_bootstrap(ram, persistent)
+    assert ram.exists() and not persistent.exists()
+
+
 @pytest.mark.parametrize("mode", [0o644, 0o640, 0o666])
 def test_public_or_group_readable_material_is_rejected(tmp_path, mode):
     ram, persistent, _ = incoming(tmp_path)
