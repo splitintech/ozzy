@@ -44,6 +44,7 @@
   "python/service/src/voice_studio_service/__init__.py",
   "python/service/src/voice_studio_service/api.py",
   "python/service/src/voice_studio_service/auth.py",
+  "python/service/src/voice_studio_service/bootstrap.py",
   "python/service/src/voice_studio_service/build-allowlist.json",
   "python/service/src/voice_studio_service/cloud.py",
   "python/service/src/voice_studio_service/deployment.py",

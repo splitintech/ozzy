@@ -73,6 +73,7 @@ def test_build_hash_and_packaged_sources(tmp_path):
     first = tmp_path / "one"
     digest, inventory = source_context(ROOT, first)
     assert len(digest) == 64 and "deploy/Dockerfile" in inventory
+    assert "python/service/src/voice_studio_service/bootstrap.py" in inventory
     (first / ".env").write_text("DO_NOT_UPLOAD=secret")
     second, _ = source_context(first, tmp_path / "two")
     assert second == digest
