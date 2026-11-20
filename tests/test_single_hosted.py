@@ -264,6 +264,34 @@ def test_duplicate_writers_fail_closed(tmp_path):
     deployment.sdk.create.assert_not_called()
 
 
+def test_discovery_refreshes_stale_writer_state(tmp_path):
+    deployment = manager(tmp_path)
+    sandbox = NS(id="sandbox", state="started", refresh_data=Mock())
+    sandbox.refresh_data.side_effect = lambda: setattr(sandbox, "state", "stopped")
+    deployment.sdk.list.return_value = [sandbox]
+    assert deployment.discover(deployment.sdk, deployment.load("test")).state == "stopped"
+    sandbox.refresh_data.assert_called_once()
+
+
+def test_discovery_ignores_only_confirmed_deleted_entries(tmp_path):
+    from daytona.common.errors import DaytonaNotFoundError
+
+    deployment = manager(tmp_path)
+    manifest = deployment.load("test")
+    manifest.sandbox_id = None
+    stale = NS(id="deleted", refresh_data=Mock(side_effect=DaytonaNotFoundError("deleted", status_code=404)))
+    deployment.sdk.list.return_value = [stale]
+    assert deployment.discover(deployment.sdk, manifest) is None
+    from daytona_api_client.exceptions import NotFoundException
+
+    stale.refresh_data.side_effect = NotFoundException(status=404, reason="deleted")
+    assert deployment.discover(deployment.sdk, manifest) is None
+    stale.refresh_data.side_effect = TimeoutError("uncertain")
+    with pytest.raises(TimeoutError):
+        deployment.discover(deployment.sdk, manifest)
+    deployment.sdk.create.assert_not_called()
+
+
 def test_stop_never_forces_busy_database(tmp_path):
     deployment = manager(tmp_path)
     sandbox = NS(id="sandbox", state="started", process=Mock(), stop=Mock())

@@ -481,7 +481,7 @@ class DeploymentManager:
             return self.start(name)
 
     def discover(self, sdk, manifest):
-        candidates = list(
+        listed = list(
             sdk.list(
                 ListSandboxesQuery(
                     labels={
@@ -492,6 +492,23 @@ class DeploymentManager:
                 )
             )
         )
+        candidates = []
+        for candidate in listed:
+            try:
+                # Provider list indexes can retain a stopped/deleted writer.
+                # Read the sandbox itself before state and ownership decisions.
+                refresh = getattr(candidate, "refresh_data", None)
+                if callable(refresh):
+                    refresh()
+            except Exception as exc:
+                # refresh_data exposes the generated client's HTTP error;
+                # higher-level SDK operations normalize it first.
+                from daytona_api_client.exceptions import NotFoundException
+
+                if missing(exc) or (isinstance(exc, NotFoundException) and exc.status == 404):
+                    continue
+                raise
+            candidates.append(candidate)
         if len(candidates) > 1:
             raise DomainError(
                 "duplicate_writers",
